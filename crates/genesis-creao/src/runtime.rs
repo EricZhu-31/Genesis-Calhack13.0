@@ -108,6 +108,18 @@ impl OperationSpec {
                 OperationRequest::CreateAgent(_),
             ) if identifier(change_id) && digest(config_digest) => Ok(()),
             (
+                OperationPurpose::Provision {
+                    change_id,
+                    config_digest,
+                },
+                OperationRequest::CreateRun(_),
+            ) if self.api_version == ApiVersion::Trigger
+                && identifier(change_id)
+                && digest(config_digest) =>
+            {
+                Ok(())
+            }
+            (
                 OperationPurpose::Execution {
                     job_id,
                     assignment_id,
@@ -181,6 +193,7 @@ impl OperationPhase {
 pub enum RuntimeFailure {
     Provider(Error),
     InterruptedSubmission,
+    MissingCreationAgent,
     UnknownStatus,
     NativeFailed,
     NativeCancelled,
@@ -295,6 +308,15 @@ impl OperationRecord {
                         Some(RuntimeFailure::Provider(error)) => {
                             error.post_may_have_run
                                 && self.ticket.is_none()
+                                && self.observation.is_none()
+                        }
+                        Some(RuntimeFailure::MissingCreationAgent) => {
+                            self.spec.api_version == ApiVersion::V2
+                                && matches!(&self.spec.request, OperationRequest::CreateAgent(_))
+                                && self
+                                    .ticket
+                                    .as_ref()
+                                    .is_some_and(|ticket| ticket.agent_id().is_none())
                                 && self.observation.is_none()
                         }
                         Some(RuntimeFailure::UnknownStatus) => self
@@ -536,9 +558,13 @@ impl Runtime {
     pub fn api_version(&self) -> ApiVersion {
         self.client.api_version()
     }
+    pub fn trigger_app_id(&self) -> Option<&str> {
+        self.client.trigger_app_id()
+    }
     pub fn prepare(&self, spec: OperationSpec) -> Result<OperationRecord, RuntimeError> {
         if spec.account_namespace != self.account_namespace()
             || spec.api_version != self.api_version()
+            || !self.client.accepts_request_app(&spec.request)
         {
             return Err(RuntimeError::ContextMismatch);
         }
@@ -550,11 +576,66 @@ impl Runtime {
         Ok(record)
     }
 
+    /// Resolve one immutable, completed Trigger bootstrap for a new job. This
+    /// grants no readiness or execution authority and makes no provider call.
+    /// A bounded scan fails closed on overflow or ambiguity; callers must pin
+    /// the returned operation identity in the job rather than select anew when
+    /// replaying historical work.
+    pub fn completed_provision(
+        &self,
+        role_id: &str,
+        config_digest: &str,
+    ) -> Result<OperationRecord, RuntimeError> {
+        if self.api_version() != ApiVersion::Trigger
+            || !identifier(role_id)
+            || !digest(config_digest)
+        {
+            return Err(RuntimeError::Invalid);
+        }
+        let connection = self.store.lock()?;
+        let ids = {
+            let mut query = connection.prepare(
+                "SELECT operation_id FROM creao_operations WHERE phase='native_completed' ORDER BY operation_id LIMIT 1001",
+            ).map_err(|_| RuntimeError::Storage)?;
+            let collected = query
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|_| RuntimeError::Storage)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| RuntimeError::Storage)?;
+            collected
+        };
+        if ids.len() > 1000 {
+            return Err(RuntimeError::Conflict);
+        }
+        let mut matched = None;
+        for id in ids {
+            let record =
+                read_record(&connection, &id, self.org_id())?.ok_or(RuntimeError::NotFound)?;
+            if record.spec.api_version != ApiVersion::Trigger
+                || record.spec.role_id != role_id
+                || record.spec.account_namespace != self.account_namespace()
+                || !self.client.accepts_request_app(&record.spec.request)
+                || !matches!(&record.spec.purpose, OperationPurpose::Provision { config_digest: saved, .. } if saved == config_digest)
+            {
+                continue;
+            }
+            self.validate_context(&record)?;
+            if record.phase != OperationPhase::NativeCompleted {
+                return Err(RuntimeError::Invalid);
+            }
+            if matched.replace(record).is_some() {
+                return Err(RuntimeError::Conflict);
+            }
+        }
+        matched.ok_or(RuntimeError::NotFound)
+    }
+
     fn validate_context(&self, record: &OperationRecord) -> Result<(), RuntimeError> {
         record.validate()?;
         if record.spec.account_namespace != self.account_namespace()
             || record.spec.org_id != self.org_id()
             || record.spec.api_version != self.api_version()
+            || !self.client.accepts_request_app(&record.spec.request)
         {
             return Err(RuntimeError::ContextMismatch);
         }
@@ -601,6 +682,65 @@ impl Runtime {
             return Ok(record);
         }
         self.step_locked(operation_id, false, None).await
+    }
+
+    /// Reconcile a v2 creation whose 202 response retained a run ID but no
+    /// agent ID. The candidate is bound only after the agent-scoped edit GET
+    /// returns the exact saved run and candidate IDs. This never sends a POST.
+    pub async fn reconcile_creation_agent(
+        &self,
+        operation_id: &str,
+        candidate_agent_id: &str,
+    ) -> Result<OperationRecord, RuntimeError> {
+        let _gate = self.store.gate.lock().await;
+        let record = self.get(operation_id)?;
+        if record.phase != OperationPhase::NeedsReconciliation
+            || !matches!(&record.failure, Some(RuntimeFailure::MissingCreationAgent))
+        {
+            return Err(RuntimeError::NeedsReconciliation);
+        }
+        let mut candidate_ticket = record.ticket.clone().ok_or(RuntimeError::Invalid)?;
+        candidate_ticket.agent_id = Some(candidate_agent_id.to_owned());
+        candidate_ticket
+            .validate_for_account(&record.spec.request, self.account_namespace())
+            .map_err(|_| RuntimeError::Invalid)?;
+        let observation = self
+            .client
+            .poll(&record.spec.request, &candidate_ticket)
+            .await
+            .map_err(|_| RuntimeError::NeedsReconciliation)?;
+        observation
+            .validate_for(&record.spec.request, &candidate_ticket)
+            .map_err(|_| RuntimeError::NeedsReconciliation)?;
+        let mut resolved = record.clone();
+        resolved.ticket = Some(
+            candidate_ticket
+                .refine(&record.spec.request, &observation)
+                .map_err(|_| RuntimeError::NeedsReconciliation)?,
+        );
+        resolved.observation = Some(observation.clone());
+        resolved.failure = None;
+        resolved.updated_at = Utc::now().max(record.updated_at);
+        match observation.status {
+            NativeRunStatus::Pending | NativeRunStatus::Running => {
+                resolved.phase = OperationPhase::Waiting;
+                resolved.next_poll_at = Some(after(resolved.updated_at, self.poll_interval)?);
+            }
+            NativeRunStatus::Completed => resolved.phase = OperationPhase::NativeCompleted,
+            NativeRunStatus::Failed => {
+                resolved.phase = OperationPhase::Failed;
+                resolved.failure = Some(RuntimeFailure::NativeFailed);
+            }
+            NativeRunStatus::Cancelled => {
+                resolved.phase = OperationPhase::Failed;
+                resolved.failure = Some(RuntimeFailure::NativeCancelled);
+            }
+            NativeRunStatus::Unknown(_) => {
+                resolved.phase = OperationPhase::NeedsReconciliation;
+                resolved.failure = Some(RuntimeFailure::UnknownStatus);
+            }
+        }
+        self.store.save(&record, resolved)
     }
 
     async fn step_locked(
@@ -723,8 +863,16 @@ impl Runtime {
                     ticket
                         .validate_for_account(&claimed.spec.request, self.account_namespace())
                         .map_err(|_| RuntimeError::Invalid)?;
+                    let missing_agent = claimed.spec.api_version == ApiVersion::V2
+                        && matches!(&claimed.spec.request, OperationRequest::CreateAgent(_))
+                        && ticket.agent_id().is_none();
                     completed.ticket = Some(ticket);
-                    completed.phase = OperationPhase::Waiting;
+                    if missing_agent {
+                        completed.phase = OperationPhase::NeedsReconciliation;
+                        completed.failure = Some(RuntimeFailure::MissingCreationAgent);
+                    } else {
+                        completed.phase = OperationPhase::Waiting;
+                    }
                 }
                 Err(error) => {
                     completed.phase = if error.post_may_have_run {
