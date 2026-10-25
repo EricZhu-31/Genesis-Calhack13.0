@@ -1,0 +1,739 @@
+//! Organization-change saga (TECH_SPEC §5).
+//!
+//! `PROPOSED -> VALIDATED -> PROVISIONING -> READY -> COMMITTED`, with
+//! `REJECTED` and `FAILED` exits. External provisioning is not a cross-provider
+//! transaction: each returned provider binding is persisted on the change
+//! record before the saga advances, so a restart resumes instead of creating
+//! duplicates. The organization itself changes only in the final commit.
+
+use crate::app::AppState;
+use crate::error::{validation_error, ApiError, ApiResult};
+use crate::store::{insert_change_tx, put_change, EventMeta, NewOutbox};
+use axum::http::StatusCode;
+use chrono::Utc;
+use genesis_core::change::{KeyAllocation, OrgChangeProposal, OrgChangeRecord};
+use genesis_core::engine::{self, local_catalog, ValidationCode};
+use genesis_core::events::EventKind;
+use genesis_core::ids::ChangeId;
+use genesis_core::lifecycle::{ChangeStatus, StateMachine};
+use genesis_core::model::Provider;
+use genesis_providers::ProvisionRequest;
+use std::time::Duration;
+
+/// Validate and record a proposal. Valid proposals start provisioning in the
+/// background; the returned record is in `VALIDATED`.
+pub async fn submit(
+    app: &AppState,
+    submitted_by: &str,
+    client_request_id: &str,
+    proposal: OrgChangeProposal,
+) -> ApiResult<(StatusCode, OrgChangeRecord)> {
+    if client_request_id.trim().is_empty() {
+        return Err(ApiError::bad_request("client_request_id is required"));
+    }
+    let guard = app.kernel.lock().await;
+    if let Some(stored) = app.store.find_change_by_request(client_request_id)? {
+        // Repeated client request. A record left PROPOSED by an older build
+        // is validated now instead of being returned unchanged forever.
+        drop(guard);
+        let stored = if stored.status == ChangeStatus::Proposed {
+            let _drive = app.saga_gates.acquire(&stored.change_id).await?;
+            let checked = validate_stored(app, &stored.change_id).await?;
+            spawn_run(app, &checked);
+            checked
+        } else {
+            stored
+        };
+        return Ok((StatusCode::OK, stored));
+    }
+    let state = app.current_state()?;
+    let alloc = KeyAllocation::allocate(&proposal);
+    let catalog = local_catalog(&state);
+    let verdict = engine::validate(&state, &proposal, &alloc, &catalog, Utc::now());
+    let now = Utc::now();
+    let mut record = OrgChangeRecord {
+        change_id: ChangeId::generate(),
+        status: ChangeStatus::Proposed,
+        proposal: proposal.clone(),
+        allocation: alloc,
+        provisioned: Default::default(),
+        ready: Default::default(),
+        operations: Default::default(),
+        errors: vec![],
+        committed_revision: None,
+        submitted_by: submitted_by.to_owned(),
+        created_at: now,
+        updated_at: now,
+    };
+    let mut effects = vec![proposed_event(&record)];
+    let next = match &verdict {
+        Ok(_) => ChangeStatus::Validated,
+        Err(_) => ChangeStatus::Rejected,
+    };
+    let reasons = verdict
+        .as_ref()
+        .err()
+        .map(|errs| errs.iter().map(|e| e.to_string()).collect())
+        .unwrap_or_default();
+    effects.push(transition(&mut record, next, reasons)?);
+    if let Err(errs) = &verdict {
+        record.errors = errs.clone();
+    }
+    // The record, its request identity and its events are written in one
+    // transaction: a stored change is never stranded in PROPOSED.
+    let events = app.store.append_events(
+        effects,
+        &EventMeta::default().caused_by(record.change_id.to_string()),
+        |tx| insert_change_tx(tx, client_request_id, &record),
+    )?;
+    drop(guard);
+    app.broadcast(&events);
+
+    match verdict {
+        Ok(_) => {
+            spawn_run(app, &record);
+            Ok((StatusCode::ACCEPTED, record))
+        }
+        Err(errs) => {
+            let mut err = validation_error(errs.clone());
+            err.details = serde_json::json!({ "errors": errs, "change_id": record.change_id });
+            Err(err)
+        }
+    }
+}
+
+fn proposed_event(record: &OrgChangeRecord) -> EventKind {
+    EventKind::ChangeProposed {
+        change_id: record.change_id.clone(),
+        expected_revision: record.proposal.expected_org_revision,
+        operations: record
+            .proposal
+            .operations
+            .iter()
+            .map(|o| o.name().to_owned())
+            .collect(),
+        rationale: record.proposal.rationale.clone(),
+    }
+}
+
+fn spawn_run(app: &AppState, record: &OrgChangeRecord) {
+    if record.status != ChangeStatus::Validated {
+        return;
+    }
+    spawn_driver(app, &record.change_id);
+}
+
+/// Start the background driver for a change unless one is already live.
+/// Returns whether a driver was started.
+pub(crate) fn spawn_driver(app: &AppState, change_id: &ChangeId) -> bool {
+    let Some(claim) = app.saga_gates.claim_driver(change_id) else {
+        return false;
+    };
+    let app2 = app.clone();
+    let id = change_id.clone();
+    tokio::spawn(async move {
+        let _claim = claim;
+        drive(&app2, &id).await;
+    });
+    true
+}
+
+const DRIVER_MAX_BACKOFF: Duration = Duration::from_secs(5);
+
+fn terminal(status: ChangeStatus) -> bool {
+    matches!(
+        status,
+        ChangeStatus::Committed | ChangeStatus::Failed | ChangeStatus::Rejected
+    )
+}
+
+/// Drive a change to a terminal or waiting state. A server-side failure (for
+/// example a storage error) is transient from the change's point of view:
+/// the driver backs off and runs the saga again from its persisted state,
+/// instead of leaving the change stranded until the next process restart.
+/// Client errors (validation, authority, conflicts) are not retried.
+async fn drive(app: &AppState, change_id: &ChangeId) {
+    let mut backoff = Duration::from_millis(200);
+    loop {
+        match run(app, change_id).await {
+            Ok(_) => return,
+            Err(e) if e.status.is_server_error() => {
+                tracing::warn!(change = %change_id, error = %e.message, retry_in_ms = backoff.as_millis() as u64,
+                    "change saga hit a server-side failure; retrying from persisted state");
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(DRIVER_MAX_BACKOFF);
+                if app
+                    .store
+                    .get_change(change_id)
+                    .is_ok_and(|r| terminal(r.status))
+                {
+                    return;
+                }
+            }
+            Err(e) => {
+                tracing::error!(change = %change_id, error = %e.message, "change saga failed");
+                return;
+            }
+        }
+    }
+}
+
+/// Changes the sweeper must leave alone: terminal ones, and ones waiting on
+/// an asynchronous provider operation (the specialist poller and operator
+/// own those).
+fn sweepable(record: &OrgChangeRecord) -> bool {
+    use genesis_core::change::ProviderOperationState as S;
+    !terminal(record.status)
+        && !record.operations.values().any(|o| {
+            matches!(
+                o.state,
+                S::Pending | S::AwaitingReadiness | S::NeedsReconciliation
+            )
+        })
+}
+
+/// One sweep: start a driver for every non-terminal change that has none.
+/// Covers drivers that stopped on a non-retryable error after the cause was
+/// fixed, and work left behind by a failed spawn. Returns the number started.
+pub fn sweep_once(app: &AppState) -> ApiResult<usize> {
+    let mut started = 0;
+    for c in app.store.list_changes()? {
+        if sweepable(&c) && spawn_driver(app, &c.change_id) {
+            started += 1;
+        }
+    }
+    Ok(started)
+}
+
+/// Background sweeper: a safety net so no change stays stranded in a
+/// non-terminal state while the process is alive.
+pub fn spawn_sweeper(app: AppState, every: Duration) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(every);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            match sweep_once(&app) {
+                Ok(n) if n > 0 => {
+                    tracing::info!(started = n, "resumed stranded organization changes")
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e.message, "change sweep failed; will retry"),
+            }
+        }
+    })
+}
+
+/// Validate a stored PROPOSED record against current state and persist the
+/// verdict. Used for records written before submission became atomic.
+/// The caller holds this change's saga gate before acquiring the kernel lock.
+async fn validate_stored(app: &AppState, change_id: &ChangeId) -> ApiResult<OrgChangeRecord> {
+    let _guard = app.kernel.lock().await;
+    let mut record = app.store.get_change(change_id)?;
+    if record.status != ChangeStatus::Proposed {
+        return Ok(record);
+    }
+    let state = app.current_state()?;
+    let catalog = local_catalog(&state);
+    let verdict = engine::validate(
+        &state,
+        &record.proposal,
+        &record.allocation,
+        &catalog,
+        Utc::now(),
+    );
+    let (next, reasons) = match &verdict {
+        Ok(_) => (ChangeStatus::Validated, vec![]),
+        Err(errs) => {
+            record.errors = errs.clone();
+            (
+                ChangeStatus::Rejected,
+                errs.iter().map(|e| e.to_string()).collect(),
+            )
+        }
+    };
+    let t = transition(&mut record, next, reasons)?;
+    save(app, &record, vec![t])?;
+    Ok(record)
+}
+
+fn transition(
+    record: &mut OrgChangeRecord,
+    to: ChangeStatus,
+    reasons: Vec<String>,
+) -> ApiResult<EventKind> {
+    let from = record.status;
+    record.status = from
+        .transition(to)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    record.updated_at = Utc::now();
+    Ok(EventKind::ChangeStatusChanged {
+        change_id: record.change_id.clone(),
+        from,
+        to,
+        reasons,
+    })
+}
+
+fn save(app: &AppState, record: &OrgChangeRecord, effects: Vec<EventKind>) -> ApiResult<()> {
+    let events = app.store.append_events(
+        effects,
+        &EventMeta::default().caused_by(record.change_id.to_string()),
+        |tx| put_change(tx, record),
+    )?;
+    app.broadcast(&events);
+    Ok(())
+}
+
+/// Persist a change record with its events (used by the specialist hook).
+pub(crate) fn save_record(
+    app: &AppState,
+    record: &OrgChangeRecord,
+    effects: Vec<EventKind>,
+) -> ApiResult<()> {
+    save(app, record, effects)
+}
+
+/// Drive a validated change to a terminal state. Concurrent calls on AppState
+/// clones serialize before loading the record; known completed steps are skipped
+/// after restart. This gate does not make an unknown native POST safe to repeat.
+pub async fn run(app: &AppState, change_id: &ChangeId) -> ApiResult<OrgChangeRecord> {
+    let _drive = app.saga_gates.acquire(change_id).await?;
+    let mut record = app.store.get_change(change_id)?;
+    if record.status == ChangeStatus::Proposed {
+        record = validate_stored(app, change_id).await?;
+    }
+    if record.status == ChangeStatus::Validated {
+        let e = transition(&mut record, ChangeStatus::Provisioning, vec![])?;
+        save(app, &record, vec![e])?;
+    }
+
+    if record.status == ChangeStatus::Provisioning {
+        let roles = engine::roles_to_provision(&record.proposal, &record.allocation);
+        let mut waiting = false;
+        for role in roles {
+            if record.ready.contains(&role.key) {
+                continue; // provisioned and ready before a restart
+            }
+            // Asynchronous providers (durable operations) take the
+            // pending/readiness path; the change waits in PROVISIONING.
+            if let Ok(runtime) = app.providers.specialist(role.provider) {
+                match crate::specialist::drive_role(app, &mut record, &role, runtime).await? {
+                    crate::specialist::Drive::Ready => continue,
+                    crate::specialist::Drive::Waiting => {
+                        waiting = true;
+                        continue;
+                    }
+                    crate::specialist::Drive::Failed(reason) => {
+                        return fail(app, record, &role.key, reason)
+                    }
+                }
+            }
+            // One deadline covers creation and readiness for this role.
+            let deadline = tokio::time::Instant::now() + app.provision_timeout;
+            let provisioner = match app.providers.provisioner(role.provider) {
+                Ok(p) => p,
+                Err(err) => return fail(app, record, &role.key, err.to_string()),
+            };
+            if !record.provisioned.contains_key(&role.key) {
+                let req = ProvisionRequest {
+                    org_id: app.org_id.clone(),
+                    change_id: record.change_id.clone(),
+                    role: role.clone(),
+                };
+                let created = tokio::time::timeout_at(deadline, provisioner.provision(&req))
+                    .await
+                    .map_err(|_| genesis_providers::ProviderError::Timeout)
+                    .and_then(|r| r);
+                match created {
+                    Ok(binding) => {
+                        // Persist the resource identity before anything else
+                        // can fail, so reconciliation and cleanup can find it.
+                        let ev = EventKind::RoleProvisioned {
+                            change_id: record.change_id.clone(),
+                            role_key: role.key.clone(),
+                            role_id: role.role_id.clone(),
+                            provider: role.provider,
+                            provider_agent_id: binding.provider_agent_id.clone(),
+                            dev_stub: binding.provider == Provider::DevStub,
+                        };
+                        record.provisioned.insert(role.key.clone(), binding);
+                        record.updated_at = Utc::now();
+                        save(app, &record, vec![ev])?;
+                    }
+                    Err(err) => return fail(app, record, &role.key, err.to_string()),
+                }
+            }
+            let binding = record.provisioned[&role.key].clone();
+            let readiness = tokio::time::timeout_at(deadline, provisioner.check_ready(&binding))
+                .await
+                .map_err(|_| genesis_providers::ProviderError::Timeout)
+                .and_then(|r| r);
+            match readiness {
+                Ok(true) => {
+                    record.ready.insert(role.key.clone());
+                    record.updated_at = Utc::now();
+                    save(app, &record, vec![])?;
+                }
+                Ok(false) => {
+                    return fail(
+                        app,
+                        record,
+                        &role.key,
+                        "readiness check did not pass".into(),
+                    )
+                }
+                Err(err) => return fail(app, record, &role.key, format!("readiness: {err}")),
+            }
+        }
+        if waiting {
+            return Ok(record); // resumed by the specialist poller
+        }
+        let e = transition(&mut record, ChangeStatus::Ready, vec![])?;
+        save(app, &record, vec![e])?;
+    }
+
+    if record.status == ChangeStatus::Ready {
+        commit(app, &mut record).await?;
+    }
+    Ok(record)
+}
+
+/// Operator decision to stop waiting on a role's asynchronous provider
+/// operation (e.g. an ambiguous creation that was investigated natively).
+/// The operation is marked failed and the change ends FAILED; any created
+/// agent ID and the operation/run IDs stay on the record for cleanup. The
+/// organization is unchanged. Nothing is retried or resubmitted.
+pub async fn abandon_operation(
+    app: &AppState,
+    change_id: &ChangeId,
+    role_key: &str,
+    reason: &str,
+) -> ApiResult<OrgChangeRecord> {
+    use genesis_core::change::ProviderOperationState as S;
+    let _drive = app.saga_gates.acquire(change_id).await?;
+    let mut record = app.store.get_change(change_id)?;
+    if record.status != ChangeStatus::Provisioning {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "not_provisioning",
+            format!("change is {:?}, not PROVISIONING", record.status),
+        ));
+    }
+    let reason: String = reason
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(200)
+        .collect();
+    let Some(op) = record.operations.get_mut(role_key) else {
+        return Err(ApiError::not_found(format!(
+            "operation for role `{role_key}`"
+        )));
+    };
+    if !matches!(
+        op.state,
+        S::Pending | S::AwaitingReadiness | S::NeedsReconciliation
+    ) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "operation_not_open",
+            "the operation is not waiting",
+        ));
+    }
+    op.state = S::Failed;
+    op.attention = Some(format!("abandoned by operator: {reason}"));
+    op.updated_at = Utc::now();
+    let progress = EventKind::ProvisioningProgress {
+        change_id: record.change_id.clone(),
+        role_key: role_key.to_owned(),
+        provider: op.provider,
+        operation_id: op.operation_id.clone(),
+        state: op.state,
+        run_id: op.run_id.clone(),
+        attention: op.attention.clone(),
+    };
+    save(app, &record, vec![progress])?;
+    fail(
+        app,
+        record,
+        role_key,
+        format!("abandoned by operator: {reason}"),
+    )
+}
+
+/// `ProviderOperation::native_status` of an operation whose agent ID an
+/// operator attached (not reported by the provider).
+pub const OPERATOR_ATTACHED: &str = "operator_attached";
+
+/// Operator: attach a native agent found during reconciliation to a role
+/// operation whose creation outcome is unknown (`needs_reconciliation`).
+///
+/// The binding uses the configuration digest of the role's original creation
+/// request, and the operation moves to `awaiting_readiness` with
+/// `native_status = "operator_attached"`. The attached ID is an operator
+/// assertion: the role still activates only after the provider's readiness
+/// verifier passes for it (for CREAO, a gateway receipt naming that agent ID,
+/// which shows the agent can run its gateway skill). The kernel does not check
+/// that the agent's configuration matches the role. An ID already bound to any
+/// role, to another change, or to a sibling role in this change is refused. No provider request is made here
+/// and the runtime's own record is left untouched.
+pub async fn attach_operation(
+    app: &AppState,
+    change_id: &ChangeId,
+    role_key: &str,
+    provider_agent_id: &str,
+    reason: &str,
+) -> ApiResult<OrgChangeRecord> {
+    use genesis_core::change::ProviderOperationState as S;
+    let agent_ok = !provider_agent_id.is_empty()
+        && provider_agent_id.len() <= 128
+        && provider_agent_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'));
+    if !agent_ok {
+        return Err(ApiError::bad_request(
+            "provider_agent_id must be 1-128 characters of letters, digits, '-', '_', '.' or ':'",
+        ));
+    }
+    let _drive = app.saga_gates.acquire(change_id).await?;
+    let mut record = app.store.get_change(change_id)?;
+    if record.status != ChangeStatus::Provisioning {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "not_provisioning",
+            format!("change is {:?}, not PROVISIONING", record.status),
+        ));
+    }
+    let reason: String = reason
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(200)
+        .collect();
+    let Some(role) = engine::roles_to_provision(&record.proposal, &record.allocation)
+        .into_iter()
+        .find(|r| r.key == role_key)
+    else {
+        return Err(ApiError::not_found(format!(
+            "role `{role_key}` in this change"
+        )));
+    };
+    let Some(op) = record.operations.get(role_key) else {
+        return Err(ApiError::not_found(format!(
+            "operation for role `{role_key}`"
+        )));
+    };
+    if op.state != S::NeedsReconciliation || record.provisioned.contains_key(role_key) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "operation_not_reconcilable",
+            "only an operation whose creation outcome is unknown can be attached",
+        ));
+    }
+    // One provider agent serves at most one role binding. Checked and saved
+    // under the kernel lock (after this change's gate, as `run` does).
+    let _kernel = app.kernel.lock().await;
+    let state = app.current_state()?;
+    let bound_role = state.roles.values().find(|r| {
+        r.binding
+            .as_ref()
+            .is_some_and(|b| b.provider_agent_id == provider_agent_id)
+    });
+    let bound_change = app.store.list_changes()?.into_iter().find(|c| {
+        c.change_id != record.change_id
+            && c.provisioned
+                .values()
+                .any(|b| b.provider_agent_id == provider_agent_id)
+    });
+    // Sibling roles of this change are not in OrgState until commit, so their
+    // bindings must be checked on the record itself. The change gate held
+    // above keeps `record` current for this check.
+    let bound_sibling = record
+        .provisioned
+        .values()
+        .any(|b| b.provider_agent_id == provider_agent_id);
+    if bound_role.is_some() || bound_change.is_some() || bound_sibling {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "agent_already_bound",
+            "this provider agent is already bound to a role, another change or a sibling role in this change",
+        ));
+    }
+    let binding = genesis_core::model::AgentBinding {
+        provider: role.provider,
+        provider_agent_id: provider_agent_id.to_owned(),
+        config_digest: ProvisionRequest {
+            org_id: app.org_id.clone(),
+            change_id: record.change_id.clone(),
+            role: role.clone(),
+        }
+        .config_digest(),
+        conversation_ref: None,
+    };
+    record.provisioned.insert(role_key.to_owned(), binding);
+    let op = record
+        .operations
+        .get_mut(role_key)
+        .expect("operation checked above");
+    op.state = S::AwaitingReadiness;
+    // Persistent marker: the provider never reported this agent.
+    op.native_status = Some(OPERATOR_ATTACHED.into());
+    op.attention = Some(format!(
+        "agent {provider_agent_id} attached by operator ({reason}); readiness must still be proven"
+    ));
+    op.updated_at = Utc::now();
+    // No `role_provisioned` event: the provider did not report this agent.
+    let events = vec![EventKind::ProvisioningProgress {
+        change_id: record.change_id.clone(),
+        role_key: role_key.to_owned(),
+        provider: op.provider,
+        operation_id: op.operation_id.clone(),
+        state: op.state,
+        run_id: op.run_id.clone(),
+        attention: op.attention.clone(),
+    }];
+    record.updated_at = Utc::now();
+    save(app, &record, events)?;
+    tracing::info!(change = %record.change_id, role = role_key, "operator attached a reconciled agent");
+    Ok(record)
+}
+
+/// End provisioning as FAILED. Any provider binding already created stays on
+/// the record and in the failure event for reconciliation and cleanup.
+fn fail(
+    app: &AppState,
+    mut record: OrgChangeRecord,
+    role_key: &str,
+    error: String,
+) -> ApiResult<OrgChangeRecord> {
+    let provider_agent_id = record
+        .provisioned
+        .get(role_key)
+        .map(|b| b.provider_agent_id.clone());
+    let failed = EventKind::ProvisioningFailed {
+        change_id: record.change_id.clone(),
+        role_key: role_key.to_owned(),
+        error: error.clone(),
+        provider_agent_id: provider_agent_id.clone(),
+    };
+    let mut reasons = vec![format!("provisioning `{role_key}` failed: {error}")];
+    if let Some(id) = provider_agent_id {
+        reasons.push(format!("provider resource retained for cleanup: {id}"));
+    }
+    let t = transition(&mut record, ChangeStatus::Failed, reasons)?;
+    save(app, &record, vec![failed, t])?;
+    Ok(record)
+}
+
+async fn commit(app: &AppState, record: &mut OrgChangeRecord) -> ApiResult<()> {
+    let _guard = app.kernel.lock().await;
+    let state = app.current_state()?;
+    let catalog = local_catalog(&state);
+    let verdict = engine::commit(
+        &state,
+        &record.proposal,
+        &record.allocation,
+        &record.provisioned,
+        &catalog,
+        Utc::now(),
+    );
+    match verdict {
+        Err(errs) => {
+            let conflict = errs
+                .iter()
+                .any(|e| e.code == ValidationCode::RevisionConflict);
+            let mut reasons: Vec<String> = errs.iter().map(|e| e.to_string()).collect();
+            if !record.provisioned.is_empty() {
+                reasons.push(format!(
+                    "provider resources retained for cleanup: {}",
+                    record
+                        .provisioned
+                        .values()
+                        .map(|b| b.provider_agent_id.clone())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            let to = if conflict {
+                ChangeStatus::Rejected
+            } else {
+                ChangeStatus::Failed
+            };
+            record.errors = errs;
+            let t = transition(record, to, reasons)?;
+            save(app, record, vec![t])?;
+            Ok(())
+        }
+        Ok(outcome) => {
+            let new_revision = outcome.state.revision;
+            record.committed_revision = Some(new_revision);
+            let t = transition(record, ChangeStatus::Committed, vec![])?;
+            let mut effects = outcome.effects;
+            effects.push(t);
+            // Initial dispatches: tell each newly responsible role's provider.
+            let outbox: Vec<NewOutbox> = effects
+                .iter()
+                .filter_map(|e| match e {
+                    EventKind::ResponsibilityAssigned {
+                        responsibility_id,
+                        owner,
+                        epoch,
+                    }
+                    | EventKind::ResponsibilityTransferred {
+                        responsibility_id,
+                        to: owner,
+                        epoch,
+                        ..
+                    } => {
+                        let role = outcome.state.roles.get(owner)?;
+                        let binding = role.binding.as_ref()?;
+                        Some(NewOutbox {
+                            destination: format!("{:?}", binding.provider).to_lowercase(),
+                            kind: "assignment_activated".into(),
+                            payload: serde_json::json!({
+                                "role_id": owner,
+                                "responsibility_id": responsibility_id,
+                                "epoch": epoch,
+                                "provider_agent_id": binding.provider_agent_id,
+                            }),
+                        })
+                    }
+                    _ => None,
+                })
+                .collect();
+            let rec = record.clone();
+            let events = app.store.commit_state(
+                state.revision,
+                &outcome.state,
+                effects,
+                &EventMeta::default().caused_by(record.change_id.to_string()),
+                outbox,
+                |tx| put_change(tx, &rec),
+            )?;
+            app.broadcast(&events);
+            Ok(())
+        }
+    }
+}
+
+/// Resume sagas interrupted by a restart.
+pub async fn resume_pending(app: &AppState) -> ApiResult<usize> {
+    let pending: Vec<_> = app
+        .store
+        .list_changes()?
+        .into_iter()
+        .filter(|c| {
+            matches!(
+                c.status,
+                ChangeStatus::Proposed
+                    | ChangeStatus::Validated
+                    | ChangeStatus::Provisioning
+                    | ChangeStatus::Ready
+            )
+        })
+        .collect();
+    let n = pending.len();
+    for c in pending {
+        spawn_driver(app, &c.change_id);
+    }
+    Ok(n)
+}
