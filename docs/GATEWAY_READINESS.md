@@ -4,7 +4,7 @@ An asynchronously created agent (CREAO) is **not ready** because its creation
 run completed, or because the agent says so. GENESIS treats a role as ready
 only when the backend itself observes the created agent calling back through
 the GENESIS gateway. This document covers the kernel side, which is
-implemented, and its [CREAO provider probe](CREAO_READINESS.md).
+implemented, and its CREAO provider probe.
 
 Code: `crates/genesis-server/src/gateway_readiness.rs`, routes in
 `crates/genesis-server/src/routes/gateway.rs`. It plugs into the
@@ -183,5 +183,5 @@ listener and a scripted probe:
 - a stored receipt survives a restart.
 
 No live provider was contacted. These kernel tests use a scripted probe; the
-additional [CREAO probe tests](CREAO_READINESS.md) use the real client/runtime
+additional CREAO probe tests use the real client/runtime
 against a loopback provider and this gateway route.

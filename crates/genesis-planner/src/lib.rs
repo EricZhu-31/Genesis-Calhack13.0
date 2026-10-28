@@ -5,11 +5,10 @@
 //! structured proposal to the kernel under the restricted agent identity.
 //! The kernel decides; the planner only proposes.
 //!
-//! The model is pluggable ([`llm::LlmClient`]): Anthropic, OpenAI-compatible,
-//! or an Elastic Agent Builder mission-planner agent ([`elastic`]).
+//! The model is pluggable ([`llm::LlmClient`]): Anthropic or any
+//! OpenAI-compatible endpoint (OpenAI, Gemini, local servers).
 
 pub mod agent;
-pub mod elastic;
 pub mod kernel;
 pub mod llm;
 pub mod output;

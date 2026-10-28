@@ -2,8 +2,8 @@
 //!
 //! Provider adapter interfaces, a pinned Apify executor, and a development stub.
 //!
-//! Other adapters (Elastic Agent Builder, Fetch bridge, CREAO) plug in by
-//! implementing these traits. The kernel never writes ownership from an
+//! Other adapters plug in by implementing these traits (see [`specialist`]
+//! for durable, asynchronously created agents). The kernel never writes ownership from an
 //! adapter: adapters return bindings and
 //! receipts; the kernel decides.
 //!
@@ -23,12 +23,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub mod apify;
-pub mod creao;
+pub mod specialist;
 pub use apify::ApifyCapabilityExecutor;
-pub use creao::{
-    CreaoSpecialist, SpecialistExecutionReceipt, SpecialistProgress, SpecialistRuntime,
+pub use specialist::{
+    PreEffectGuard, SpecialistExecutionReceipt, SpecialistProgress, SpecialistRuntime,
 };
-pub use genesis_creao::PreEffectGuard;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "detail", rename_all = "snake_case")]

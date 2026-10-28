@@ -80,22 +80,13 @@ the engine itself is unchanged except for the root-hydration fix.
   candidates and are counted; nothing is thrown into the engine.
 - `cascade.mjs`: asks for 2k proposals and screens them on a separate seeded screening panel before the
   sealed plan exists; keeps the top k. Screening evaluations are reported but are not selection evidence.
-- `sponsors/elastic.mjs`: the verified ledger as one idempotent bulk body (`_id` = record hash); posts
-  only when `ELASTICSEARCH_URL` and `ELASTIC_DATA_API_KEY` are set. The first data key refused every document
-  (`indices:admin/auto_create` unauthorized), which the results record verbatim; on 2026-10-25 a key with
-  `create_index`/`write`/`read` on `genesis-iteration-ledger` indexed all seven ledgers and the recorded
-  factory run's kernel events (429 documents; see the analysis note).
-- `sponsors/fetch-offer.mjs`: an exported bundle as a `genesis-method-offer/1` chat message and as the
-  observation body the ACP mission bridge already posts (`source`, `summary`, `evidence_ref`). The bridge
-  does not yet send or parse it; the receiver re-verifies with `adopt` either way.
 - `run-jobshop.mjs`: the runner for both families (`--family jobshop|binpack`; the name predates the second
   family). `--mock` uses a seeded local stand-in; without it, live model calls.
-  Writes `result.json`, `ledger.json`, `bundle.json`, `elastic-bulk.ndjson`, `fetch-offer.txt`,
-  `fetch-observation.json` under `results/`. After the loop it confirms the frontier on a fresh panel and,
+  Writes `result.json`, `ledger.json` and `bundle.json` under `results/`. After the loop it confirms the frontier on a fresh panel and,
   report-only, scores the root and every control on that same panel.
 
 ```sh
-node --test scripts/iteration/*.test.mjs scripts/iteration/families/*.test.mjs scripts/iteration/mutators/*.test.mjs scripts/iteration/sponsors/*.test.mjs
+node --test scripts/iteration/*.test.mjs scripts/iteration/families/*.test.mjs scripts/iteration/mutators/*.test.mjs
 node scripts/iteration/run-jobshop.mjs --mock --generations 3 --k 3 --heldout 8
 node scripts/iteration/run-jobshop.mjs --generations 5 --k 4 --heldout 20   # live, needs GENESIS_LLM_API_KEY
 node scripts/iteration/run-jobshop.mjs --family binpack --mock --generations 2

@@ -77,14 +77,9 @@ checks, so the scorer is tested too.
 ## Limits
 
 - Dev-stub providers: a committed change proves kernel validity, not that
-  Elastic, CREAO or Fetch accepted the role.
+  any live provider accepted the role.
 - Scores are rules, not judgment. A creative but valid answer can fail a
   rule; read the failed-check column before blaming the model.
 - Scenario evidence uses `https://portal.example`. The capability path needs
   https evidence (forge source rules, enforced by the kernel since #57), so a
   live demo must serve the portal through its https tunnel.
-- `GENESIS_LLM_PROVIDER=elastic` (with `ELASTIC_KIBANA_URL` and
-  `ELASTIC_MANAGEMENT_API_KEY`) evaluates the Agent Builder planner the
-  server uses, through one reconciled agent for `org_eval`. The evaluation
-  org indexes no evidence in Elastic, so the agent's evidence tool finds
-  nothing and the decision rests on the prompt's state and evidence.

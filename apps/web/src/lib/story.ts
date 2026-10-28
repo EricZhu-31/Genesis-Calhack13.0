@@ -100,7 +100,7 @@ footer{margin-top:40px;font-size:12px;color:var(--ink3)}
 </style></head><body><main>
 <h1>${esc(state.name)}</h1>
 <p>How the organization rewrote itself, from founding to r${state.revision}. Every line cites recorded kernel evidence.</p>
-${devStubs ? '<div class="notice">Development stubs stood in for some providers. Roles labeled DEV STUB are not live Elastic, Fetch or CREAO agents.</div>' : ""}
+${devStubs ? '<div class="notice">Development stubs stood in for some providers. Roles labeled DEV STUB are not live provider agents.</div>' : ""}
 <h2>Evolution</h2><ol class="tl">${entries.map(entryHtml).join("") || "<li>No structural changes.</li>"}</ol>
 ${auditHtml(audit)}
 <h2>Why each role exists</h2>${roleHtml}

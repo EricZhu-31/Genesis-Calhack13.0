@@ -8,7 +8,6 @@
 //! - [`ReplayClient`]: returns scripted responses. **Tests and offline demos
 //!   only**; its model name is `replay` so evidence shows it was not a model.
 //!
-//! An Elastic Agent Builder planner can implement the same trait later.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -427,7 +426,7 @@ pub fn from_env() -> Result<Option<Box<dyn LlmClient>>, LlmError> {
         )),
         other => {
             return Err(LlmError::NotConfigured(format!(
-                "unknown GENESIS_LLM_PROVIDER `{other}` (use anthropic, openai, gemini, openai-compatible or elastic)"
+                "unknown GENESIS_LLM_PROVIDER `{other}` (use anthropic, openai, gemini or openai-compatible)"
             )))
         }
     };

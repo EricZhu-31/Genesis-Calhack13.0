@@ -2,12 +2,9 @@
 //! (TECH_SPEC §9).
 //!
 //! Runs as its own process (`genesis registry`) so that Org A and Org B share
-//! nothing but published manifests. With Elastic configured, published
-//! manifests are projected into the shared capability index and search uses
-//! Elastic retrieval; every hit is resolved against the canonical stored
-//! manifest, so the index can rank but never inject candidates. Without
-//! Elastic (or if it fails) search falls back to a keyword ranking.
-//! Installation always re-fetches the canonical manifest.
+//! nothing but published manifests. Search uses a keyword ranking over the
+//! canonical stored manifests. Installation always re-fetches the canonical
+//! manifest.
 
 mod method_client;
 pub mod methods;
@@ -34,11 +31,6 @@ pub struct RegistryState {
     publishers: Arc<HashMap<String, OrgId>>,
     /// Tokens allowed to search and read (publisher tokens are always readers).
     readers: Arc<Vec<String>>,
-    /// Optional Elastic projection of published manifests.
-    elastic: Option<genesis_elastic::ElasticClient>,
-    /// Set when the Elastic index may be missing manifests (startup, failed
-    /// indexing); the next search re-projects all manifests first.
-    needs_sync: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
@@ -111,103 +103,7 @@ impl RegistryState {
             conn: Arc::new(Mutex::new(conn)),
             publishers: Arc::new(publishers),
             readers: Arc::new(readers),
-            elastic: None,
-            needs_sync: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         })
-    }
-
-    /// Use Elastic retrieval for capability search.
-    pub fn with_elastic(mut self, client: genesis_elastic::ElasticClient) -> Self {
-        self.elastic = Some(client);
-        self
-    }
-
-    /// Enable Elastic retrieval when `ELASTICSEARCH_URL` and
-    /// `ELASTIC_DATA_API_KEY` are set.
-    pub fn with_elastic_from_env(self) -> anyhow::Result<Self> {
-        match genesis_elastic::ElasticConfig::from_env() {
-            Some(cfg) => {
-                let client = genesis_elastic::ElasticClient::new(cfg)?;
-                tracing::info!(index = %client.capability_index(), "registry elastic retrieval enabled");
-                Ok(self.with_elastic(client))
-            }
-            None => Ok(self),
-        }
-    }
-
-    /// Project every stored manifest into the capability index (idempotent).
-    async fn sync_index(&self, es: &genesis_elastic::ElasticClient) -> Result<(), String> {
-        use std::sync::atomic::Ordering;
-        let docs: Vec<_> = self
-            .all_manifests()
-            .map_err(|e| e.message)?
-            .iter()
-            .map(genesis_elastic::capability_doc)
-            .collect();
-        es.ensure_capability_index()
-            .await
-            .map_err(|e| e.to_string())?;
-        if !docs.is_empty() {
-            es.index_capabilities(&docs)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
-        self.needs_sync.store(false, Ordering::SeqCst);
-        Ok(())
-    }
-
-    /// The canonical stored manifest for an exact version.
-    fn manifest(&self, id: &str, version: &str) -> ApiResult<Option<CapabilityManifest>> {
-        let conn = self.lock();
-        let json: Option<String> = conn
-            .query_row(
-                "SELECT manifest_json FROM capability_versions WHERE capability_id = ?1 AND version = ?2",
-                params![id, version],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| ApiError::internal(e.to_string()))?;
-        json.map(|j| serde_json::from_str(&j).map_err(|e| ApiError::internal(e.to_string())))
-            .transpose()
-    }
-
-    /// Elastic retrieval resolved against canonical manifests.
-    async fn elastic_search(
-        &self,
-        es: &genesis_elastic::ElasticClient,
-        req: &SearchRequest,
-    ) -> Result<Vec<SearchCandidate>, String> {
-        use std::sync::atomic::Ordering;
-        if self.needs_sync.load(Ordering::SeqCst) {
-            self.sync_index(es).await?;
-        }
-        let hits = es
-            .search_capabilities(
-                &req.query,
-                req.available_scopes.as_deref(),
-                req.limit.max(1),
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-        let mut out = Vec::new();
-        for h in hits {
-            let Some(m) = self
-                .manifest(&h.doc.capability_id, &h.doc.version)
-                .map_err(|e| e.message)?
-            else {
-                continue; // not in the canonical store: never a candidate
-            };
-            if !m.state.is_usable() {
-                continue;
-            }
-            if let Some(scopes) = &req.available_scopes {
-                if !m.required_permissions.iter().all(|p| scopes.contains(p)) {
-                    continue;
-                }
-            }
-            out.push(candidate(&m, h.score as f32));
-        }
-        Ok(out)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
@@ -334,20 +230,6 @@ async fn publish(
         )
         .map_err(|e| ApiError::internal(e.to_string()))?;
     }
-    if let Some(es) = &reg.elastic {
-        // Best effort: the SQLite record is authoritative; a failed
-        // projection is retried by the next search.
-        let doc = genesis_elastic::capability_doc(&manifest);
-        let indexed = match es.ensure_capability_index().await {
-            Ok(()) => es.index_capabilities(&[doc]).await.map(|_| ()),
-            Err(e) => Err(e),
-        };
-        if let Err(error) = indexed {
-            tracing::warn!(%error, "capability projection failed; will resync");
-            reg.needs_sync
-                .store(true, std::sync::atomic::Ordering::SeqCst);
-        }
-    }
     Ok((StatusCode::CREATED, Json(manifest)))
 }
 
@@ -406,7 +288,7 @@ fn tokens(s: &str) -> Vec<String> {
         .collect()
 }
 
-/// Keyword ranking over intent, applicability and ID. Placeholder for Elastic.
+/// Keyword ranking over intent, applicability and ID.
 pub fn rank(manifests: &[CapabilityManifest], req: &SearchRequest) -> Vec<SearchCandidate> {
     let q = tokens(&req.query);
     let mut out: Vec<SearchCandidate> = manifests
@@ -446,14 +328,6 @@ async fn search(
     Json(req): Json<SearchRequest>,
 ) -> ApiResult<Json<Vec<SearchCandidate>>> {
     reg.require_reader(&headers)?;
-    if let Some(es) = &reg.elastic {
-        match reg.elastic_search(es, &req).await {
-            Ok(found) => return Ok(Json(found)),
-            Err(error) => {
-                tracing::warn!(%error, "elastic capability search failed; using keyword ranking")
-            }
-        }
-    }
     let all = reg.all_manifests()?;
     Ok(Json(rank(&all, &req)))
 }

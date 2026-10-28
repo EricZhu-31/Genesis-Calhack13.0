@@ -3,8 +3,6 @@ resolver = "2"
 members = [
     "crates/genesis-apify",
     "crates/genesis-core",
-    "crates/genesis-creao",
-    "crates/genesis-elastic",
     "crates/genesis-forge",
     "crates/genesis-planner",
     "crates/genesis-planner-eval",
@@ -22,7 +20,6 @@ publish = false
 [workspace.dependencies]
 genesis-core = { path = "crates/genesis-core" }
 genesis-providers = { path = "crates/genesis-providers" }
-genesis-elastic = { path = "crates/genesis-elastic" }
 
 anyhow = "1"
 async-trait = "0.1"

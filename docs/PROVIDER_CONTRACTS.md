@@ -86,7 +86,7 @@ organizational roles, with a durable bootstrap and separate gateway readiness.
 Each job resends its frozen role contract, task and complete authority context;
 shared app identity is not physical isolation. Historical v1/v2 records and
 explicit library fixtures are retained, but backend entry points refuse those
-protocols and keys. See [runtime configuration and migration](CREAO_RUNTIME.md).
+protocols and keys. See runtime configuration and migration.
 
 The runtime persists intent before one POST, resumes known runs by GET, refuses
 ambiguous resubmission, and shares a conservative local quota/cooldown ledger.

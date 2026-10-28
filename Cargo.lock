@@ -578,44 +578,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "genesis-creao"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "chrono",
- "clap",
- "genesis-verification",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "genesis-elastic"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "chrono",
- "dotenvy",
- "genesis-core",
- "genesis-elastic",
- "genesis-providers",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "genesis-forge"
 version = "0.1.0"
 dependencies = [
@@ -641,7 +603,6 @@ dependencies = [
  "clap",
  "dotenvy",
  "genesis-core",
- "genesis-elastic",
  "genesis-providers",
  "genesis-server",
  "reqwest",
@@ -679,7 +640,6 @@ dependencies = [
  "chrono",
  "genesis-apify",
  "genesis-core",
- "genesis-creao",
  "genesis-verification",
  "serde",
  "serde_json",
@@ -701,8 +661,6 @@ dependencies = [
  "futures",
  "genesis-apify",
  "genesis-core",
- "genesis-creao",
- "genesis-elastic",
  "genesis-forge",
  "genesis-providers",
  "genesis-verification",

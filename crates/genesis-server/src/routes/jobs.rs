@@ -114,7 +114,7 @@ pub async fn dispatch(
     // A caller-selected provider must not bypass backend specialist result
     // collection. Keep this HTTP boundary separate from backend capability
     // preparation, which validates the installation and chooses the executable
-    // provider for both CREAO and Elastic roles.
+    // provider. Kept for roles bound to backend-managed specialist providers.
     let bound = state
         .roles
         .get(&req.role_id)
@@ -203,13 +203,6 @@ pub async fn submit_result(
             StatusCode::CONFLICT,
             "managed_specialist_result",
             "specialist output is collected by the backend; caller result flags cannot verify it",
-        ));
-    }
-    if crate::elastic_jobs::backend_managed(&job) {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "managed_elastic_result",
-            "Elastic answers are collected by the backend; caller result flags cannot verify them",
         ));
     }
     if sub.attempt_id != job.attempt_id {

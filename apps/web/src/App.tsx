@@ -58,7 +58,7 @@ function Console({ ep }: { ep: OrgEndpoint }) {
         <div style={{ padding: "8px max(16px, env(safe-area-inset-left)) 0" }}>
           <div className="notice">
             Development stubs are enabled for {ep.label}. Bindings labeled DEV STUB are stand-ins, not live
-            Elastic, Fetch or CREAO integrations.
+            provider integrations.
           </div>
         </div>
       )}
@@ -74,7 +74,7 @@ function Console({ ep }: { ep: OrgEndpoint }) {
       <GapFinalizationContext.Provider value={finalization}>
         <GapIntakeContext.Provider value={intake}>
           <main className="layout">
-            <MissionPanel state={view.state} api={view.api} />
+            <MissionPanel state={view.state} />
             <OrgPanel api={view.api} state={view.state} changes={view.changes} events={view.events} />
             <AttentionPanel api={view.api} changes={view.changes} jobs={view.jobs} events={view.events} state={view.state} />
             <EvidencePanel events={view.events} state={view.state} />

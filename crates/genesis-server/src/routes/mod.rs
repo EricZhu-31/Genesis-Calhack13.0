@@ -11,7 +11,6 @@ mod gateway;
 pub(crate) mod jobs;
 mod method_adoptions;
 mod org;
-mod search;
 
 use crate::app::AppState;
 use axum::extract::DefaultBodyLimit;
@@ -60,8 +59,6 @@ pub fn router(state: AppState) -> Router {
         .route("/outbox", get(jobs::outbox))
         .route("/events", get(events::stream))
         .route("/events/log", get(events::log))
-        .route("/projection", get(search::status))
-        .route("/search/evidence", get(search::evidence))
         .route("/capabilities/search", post(capabilities::search))
         .route("/capabilities/publish", post(capabilities::publish))
         .route(

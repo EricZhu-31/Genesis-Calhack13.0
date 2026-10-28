@@ -4,9 +4,9 @@
 //! them. This worker delivers them with bounded exponential backoff. Delivery
 //! is at least once; receivers must deduplicate.
 //!
-//! Real provider adapters (Elastic, CREAO, Fetch bridge) are owned by other
-//! workstreams. Until one is registered, items for that provider stay pending
-//! with a visible `last_error`, unless the development stub is enabled.
+//! Items for a provider without a registered adapter or specialist runtime
+//! stay pending with a visible `last_error`, unless the development stub is
+//! enabled.
 
 use crate::app::AppState;
 use crate::store::{put_job, EventMeta, OutboxItem};
@@ -54,9 +54,6 @@ async fn deliver(app: &AppState, item: &OutboxItem) -> Result<(), String> {
             crate::specialist_jobs::deliver(app, item).await
         }
         ("internal", _) => Ok(()),
-        ("elastic", "job_dispatch") if app.elastic_agents.is_some() => {
-            crate::elastic_jobs::deliver(app, item).await
-        }
         (_, "assignment_activated")
             if app.providers.dev_stub_enabled() || item.destination == "dev_stub" =>
         {

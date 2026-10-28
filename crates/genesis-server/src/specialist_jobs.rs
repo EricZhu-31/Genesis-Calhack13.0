@@ -1,6 +1,6 @@
-//! Jobs for roles implemented by an asynchronous specialist runtime (CREAO).
+//! Jobs for roles implemented by an asynchronous specialist runtime.
 //!
-//! Follows CREAO_RUNTIME.md steps 5–6 on the kernel side:
+//! Kernel side of the durable specialist runtime contract (see docs/ASYNC_PROVISIONING.md):
 //!
 //! - Delivery prepares one durable job operation (`prepare_job`, deterministic
 //!   per job attempt) after checking live authority. Outbox redelivery finds

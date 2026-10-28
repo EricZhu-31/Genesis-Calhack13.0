@@ -14,9 +14,9 @@ tested scope, and a receiving organization decides locally whether to adopt,
 adapt or decline them.
 
 > This repository started as a Cal Hacks 13.0 project. The hackathon-only
-> parts (the event/venue mission demo, sponsor proof kits, the Fetch.ai
-> bridge and the stage presenter) were removed on the `slim/core` branch;
-> they remain in Git history before that branch.
+> parts (the event/venue mission demo, sponsor proof kits, the Fetch.ai,
+> CREAO and Elastic integrations, and the stage presenter) were removed on
+> the `slim/core` branch; they remain in Git history before that branch.
 
 ## The loop
 
@@ -69,11 +69,10 @@ registry; every route requires a bearer token.
 | --- | --- |
 | Capability synthesis (forge / server acquisition) | `ANTHROPIC_API_KEY` |
 | Building and running Actors | `APIFY_TOKEN` (billable) |
-| Planner model | `GENESIS_LLM_PROVIDER` = `anthropic` \| `openai` \| `gemini` \| `openai-compatible` \| `elastic`, plus `GENESIS_LLM_MODEL`, `GENESIS_LLM_API_KEY`, optional `GENESIS_LLM_BASE_URL` |
-| Optional: CREAO specialists | `CREAO_TRIGGER_API_KEY` and friends — see [CREAO runtime](docs/CREAO_RUNTIME.md) |
-| Optional: Elastic projection / Agent Builder | `ELASTICSEARCH_URL`, `ELASTIC_DATA_API_KEY`, `ELASTIC_KIBANA_URL`, `ELASTIC_MANAGEMENT_API_KEY` — see [Elastic](docs/ELASTIC.md) |
-
-Optional integrations stay off unless their variables are set.
+| Planner model | `GENESIS_LLM_PROVIDER` = `anthropic` \| `openai` \| `gemini` \| `openai-compatible`, plus `GENESIS_LLM_MODEL`, `GENESIS_LLM_API_KEY`, optional `GENESIS_LLM_BASE_URL` |
+Specialist roles have no live runtime in this tree: `genesis dev` binds them to
+labeled development stubs, and a production organization needs a
+`SpecialistRuntime` or `RoleProvisioner` adapter (see [development setup](docs/DEV.md)).
 
 ## Repository layout
 
@@ -84,9 +83,8 @@ Optional integrations stay off unless their variables are set.
 | `crates/genesis-forge` | Capability synthesis/acquisition and method generation/accounting CLIs |
 | `crates/genesis-verification` | Independent output verification against trusted suites |
 | `crates/genesis-apify` | Apify client (builds, runs, datasets) |
-| `crates/genesis-providers` | Provider adapters (Apify executor, CREAO specialists, dev stub) |
+| `crates/genesis-providers` | Provider adapters (Apify executor, specialist runtime contract, dev stub) |
 | `crates/genesis-planner`, `genesis-planner-eval` | LLM mission planner and its replay evaluation |
-| `crates/genesis-creao`, `genesis-elastic` | Optional integrations |
 | `actors/venue-extractor-template` | Scaffold the forge fills to build Actors |
 | `apps/web` | React operator console, including the invention-lab views |
 | `experiments/`, `scripts/iteration` | Invention-lab executor/evaluator, scheduling and job-shop studies, iteration engine |

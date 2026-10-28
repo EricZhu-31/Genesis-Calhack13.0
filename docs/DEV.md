@@ -25,16 +25,13 @@ State lives in `data/dev/*.db` (git-ignored). Delete that folder for a clean run
 
 | Integration | Guide | Status |
 | --- | --- | --- |
-| Elastic: evidence projection/search, capability search, Agent Builder specialists and jobs | [ELASTIC.md](ELASTIC.md), keys: [ELASTIC_SETUP.md](ELASTIC_SETUP.md) | Merged (#11); fake-tested. Run `genesis-elastic-smoke` against a real project |
-| Mission planner (configured model, or an Elastic Agent Builder agent) | [PLANNER.md](PLANNER.md) | Merged (#12, #22); replay- and fake-tested; requires model configuration |
-| CREAO asynchronous roles and jobs | [CREAO_RUNTIME.md](CREAO_RUNTIME.md), [ASYNC_PROVISIONING.md](ASYNC_PROVISIONING.md) | Kernel hook and env registration merged (#20). Gateway readiness (#26), operator attach (#27) and the CREAO readiness probe (#29) are open. Scripted-provider tests only; no live run |
+| Mission planner (Anthropic or OpenAI-compatible model) | [PLANNER.md](PLANNER.md) | Replay- and fake-tested; requires model configuration |
+| Asynchronous specialist roles and jobs (generic runtime contract; no concrete runtime ships) | [ASYNC_PROVISIONING.md](ASYNC_PROVISIONING.md), [GATEWAY_READINESS.md](GATEWAY_READINESS.md) | Kernel hooks, readiness and operator attach tested with scripted runtimes |
 | Apify capability acquisition, execution, acceptance and adoption | [CAPABILITY_EXECUTION.md](CAPABILITY_EXECUTION.md) | Merged; loopback-fixture tested |
 | Console: capability evidence, Attention panel and failure drills | [CAPABILITY_EXECUTION.md](CAPABILITY_EXECUTION.md) | Capability evidence merged (#21, integration #55); Attention panel and failure drills (#28) remain open |
 
-The evidence listed here is local or loopback; live sponsor execution remains
-a separate gate. `genesis dev` enables labeled fallback stubs, but configured
-Elastic and CREAO integrations can still attach from the environment. For a
-fully stubbed demo, leave those provider configurations unset.
+The evidence listed here is local or loopback. `genesis dev` enables labeled
+fallback stubs for every role provider without an adapter.
 
 **Dev stubs are not integrations.** With stubs on, any role whose provider has no adapter gets a binding with `provider: "dev_stub"` and an ID like `devstub-elastic-…`. The console labels these `DEV STUB · for elastic`, and the `role_provisioned` event carries `dev_stub: true`. Run an organization without `--dev-stub` and unconfigured providers fail provisioning instead.
 
@@ -76,8 +73,8 @@ skips changes waiting on an asynchronous provider operation, which the
 specialist poller and operators own.
 
 Recovery is the same as after a restart. A step whose binding was not persisted
-calls the provider again; for Elastic that is safe because agent IDs are
-deterministic and adopted only if identical. The SQLite connection also waits up
+calls the provider again; adapters must make that safe (for example with
+deterministic agent IDs adopted only if identical). The SQLite connection also waits up
 to 5 s for another connection's lock before failing.
 `tests/saga_resilience.rs` covers three cases:
 
@@ -96,27 +93,27 @@ cd apps/web && npm run gen:types
 
 | Who | Calls | Token |
 |---|---|---|
-| Elastic mission agent | `POST /missions/{id}/observations`, `POST /missions/{id}/requirements`, `POST /org-changes`, `GET /organization` | agent |
-| Elastic and CREAO specialists | Trusted backend provisioning/runtime and job collection; caller result POSTs cannot complete their jobs | backend only |
+| Mission planner agent | `POST /missions/{id}/observations`, `POST /missions/{id}/requirements`, `POST /org-changes`, `GET /organization` | agent |
+| Specialist runtimes (`genesis_providers::SpecialistRuntime`) | Trusted backend provisioning/runtime and job collection; caller result POSTs cannot complete their jobs | backend only |
 | Other caller-managed adapters | Report `POST /jobs/{id}/results` for jobs outside managed provider/capability paths | adapter |
-| Fetch bridge | `POST /contracts/{id}/state` with `sender_address` (must match the contracted specialist) | adapter |
+| Contract adapters | `POST /contracts/{id}/state` with `sender_address` (must match the contracted specialist) | adapter |
 | Apify acquisition / verifier | `POST /capability-acquisitions`; publish through `POST /capabilities/publish` with a trusted forge or acquisition verification reference; the backend recomputes the evidence | operator |
 | Org B | `POST /capability-adoptions` for durable discovery and independent acceptance; `POST /capability-runs` for an accepted, attached capability | operator |
 
-Caller-managed job results must carry the job's `attempt_id` and `epoch`. A result with an old epoch is archived as `RESULT_REJECTED` (409 `stale_epoch`). Provider success with `domain_verified: false` leaves the job in `VERIFYING`. Repeating a result with the same `operation_id` produces one ledger row. Backend-managed capability jobs and Elastic/CREAO specialist jobs instead use their trusted collection paths; generic result submissions are rejected.
+Caller-managed job results must carry the job's `attempt_id` and `epoch`. A result with an old epoch is archived as `RESULT_REJECTED` (409 `stale_epoch`). Provider success with `domain_verified: false` leaves the job in `VERIFYING`. Repeating a result with the same `operation_id` produces one ledger row. Backend-managed capability jobs and specialist-runtime jobs instead use their trusted collection paths; generic result submissions are rejected.
 
 ### Plugging in a real adapter
 
 ```rust
 let providers = ProviderSet::new()
-    .with_provisioner(Provider::Elastic, Arc::new(ElasticAdapter::new(cfg)))
+    .with_provisioner(Provider::Internal, Arc::new(MyAdapter::new(cfg)))
     .with_dev_stub(DevStub::default()); // optional fallback for the rest
 let app = genesis_server::build_org(&org_config, Some(providers))?;
 ```
 
 ## Runtime behavior and limits
 
-- Registry search uses configured Elastic retrieval resolved against canonical manifests; missing or failed Elastic retrieval falls back to keyword ranking.
+- Registry search is a keyword ranking over intent, applicability conditions and capability ID.
 - Outbox items for providers without an adapter stay pending with `last_error` (visible at `GET /api/v1/outbox`) unless dev stubs are on.
 - Capability runs use durable backend submission/collection and semantic finalization. Their evidence never enters through generic `/jobs/{id}/results`; see [CAPABILITY_EXECUTION.md](CAPABILITY_EXECUTION.md).
 - Tokens are static bearer strings from env vars. Fine for the demo, not for production.

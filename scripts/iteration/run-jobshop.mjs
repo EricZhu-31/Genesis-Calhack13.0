@@ -12,8 +12,6 @@ import { binpackFamily, binpackControls, featureDoc as binpackDoc, FEATURES as b
 import { claudeMutator, childCall } from "./mutators/claude.mjs";
 import { describeSandbox } from "./families/sandbox.mjs";
 import { cascade } from "./cascade.mjs";
-import { toBulk, post } from "./sponsors/elastic.mjs";
-import { toOffer, toChatText, toObservation } from "./sponsors/fetch-offer.mjs";
 
 const arg = (name, dflt) => { const i = process.argv.indexOf("--" + name); return i < 0 ? dflt : process.argv[i + 1] === undefined || process.argv[i + 1].startsWith("--") ? true : process.argv[i + 1]; };
 const num = (name, dflt) => Number(arg(name, dflt));
@@ -101,18 +99,13 @@ function main() {
     result.final_panel_comparison = { note: "report-only: controls and the root scored on the frontier's confirmation panel, outside the engine's selection", rows: reportPanel(family, declared.instances, [{ id: "frontier", pkg: frontier.package }, { id: `root (${spec.root})`, pkg: state.packages[sha256(family.root())] }, ...controls.map((c) => ({ id: c.id, pkg: c.package }))]) };
     const bundle = exportBundle(state, family.id);
     fs.writeFileSync(path.join(out, "bundle.json"), JSON.stringify(bundle, null, 1));
-    const offer = toOffer(bundle, { from: "lab_a", bundle_ref: path.join(out, "bundle.json") });
-    fs.writeFileSync(path.join(out, "fetch-offer.txt"), toChatText(offer));
-    fs.writeFileSync(path.join(out, "fetch-observation.json"), JSON.stringify(toObservation(offer), null, 1));
     result.frontier = { package: frontier.package.sha256, source: frontier.package.source, generation: frontier.generation, selection_success_count: frontier.success_count };
   } else result.confirmation = null;
   result.ledger_verify = verifyLedger(state.ledger);
-  const bulk = toBulk(state.ledger, { exported_at: new Date().toISOString() });
-  const elasticEnv = { url: secrets.ELASTICSEARCH_URL || process.env.ELASTICSEARCH_URL, apiKey: secrets.ELASTIC_DATA_API_KEY || process.env.ELASTIC_DATA_API_KEY };
-  fs.writeFileSync(path.join(out, "elastic-bulk.ndjson"), bulk.body);
   fs.writeFileSync(path.join(out, "ledger.json"), JSON.stringify(state.ledger, null, 1));
   fs.writeFileSync(path.join(out, "result.json"), JSON.stringify(result, null, 1));
-  return post(bulk, elasticEnv).then((es) => { result.elastic = es; fs.writeFileSync(path.join(out, "result.json"), JSON.stringify(result, null, 1)); process.stdout.write(`${JSON.stringify({ frontier: result.frontier && result.frontier.selection_success_count, confirmation: result.confirmation, final_panel: result.final_panel_comparison && result.final_panel_comparison.rows.map((r) => `${r.id} ${r.success_count}/${r.of}`), evaluations: state.evaluations, screening: mutator.counts.evaluations, usage: inner.usage, elastic: es, ledger: { records: state.ledger.records.length, head: state.ledger.head, ok: result.ledger_verify.ok }, out }, null, 1)}\n`); });
+  process.stdout.write(`${JSON.stringify({ frontier: result.frontier && result.frontier.selection_success_count, confirmation: result.confirmation, final_panel: result.final_panel_comparison && result.final_panel_comparison.rows.map((r) => `${r.id} ${r.success_count}/${r.of}`), evaluations: state.evaluations, screening: mutator.counts.evaluations, usage: inner.usage, ledger: { records: state.ledger.records.length, head: state.ledger.head, ok: result.ledger_verify.ok }, out }, null, 1)}\n`);
+  return Promise.resolve();
 }
 
 main().catch((err) => { process.stderr.write(`run failed: ${err && err.stack ? err.stack : err}\n`); process.exit(1); });

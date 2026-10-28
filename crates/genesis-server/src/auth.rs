@@ -4,7 +4,7 @@
 //! `org_id` is never trusted. Three principals exist per organization:
 //!
 //! - `Operator`: kernel/operator management routes and the UI.
-//! - `Agent`: restricted identity for agents (e.g. the Elastic mission agent);
+//! - `Agent`: restricted identity for agents (e.g. the mission planner);
 //!   may submit observations, requirements and change proposals.
 //! - `Adapter`: provider adapters reporting job results and contract updates.
 

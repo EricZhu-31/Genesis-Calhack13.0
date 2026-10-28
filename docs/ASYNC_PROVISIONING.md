@@ -1,7 +1,7 @@
 # Asynchronous role provisioning (pending/readiness hook)
 
 Implements the kernel side of the hook described in
-[CREAO_RUNTIME.md](CREAO_RUNTIME.md) (steps 1–4). Code:
+CREAO_RUNTIME.md (steps 1–4). Code:
 `crates/genesis-server/src/specialist.rs`, called from `saga::run`.
 
 ## Behavior
@@ -71,7 +71,7 @@ The shared authority check does not revalidate an original required scope:
 generic jobs do not persist that field. Native completion is still not domain
 success, and the provider binding check here compares the provider, not a frozen
 agent/configuration receipt. Domain finalizers must use the bound execution
-receipt described in [CREAO_RUNTIME.md](CREAO_RUNTIME.md).
+receipt described in CREAO_RUNTIME.md.
 
 Tests: `crates/genesis-server/tests/specialist_jobs.rs`,
 `review_specialist_authority.rs` and `capability_invocation.rs`.
@@ -88,7 +88,7 @@ Tests: `crates/genesis-server/tests/specialist_jobs.rs`,
   `configured_specialists`. Being registered is not being ready: without a
   readiness verifier an app-bound CREAO role stays `awaiting_readiness`.
   Production uses API Trigger, not Developer v1/v2. Publish the app first and
-  use fresh Trigger journals; see [CREAO_RUNTIME.md](CREAO_RUNTIME.md).
+  use fresh Trigger journals; see CREAO_RUNTIME.md.
   Completed bootstrap contracts are retained locally and resent with each job.
 - **The readiness verifier's kernel side is done**: `GatewayReadiness` issues a
   one-time challenge and accepts the agent's receipt at
@@ -97,7 +97,7 @@ Tests: `crates/genesis-server/tests/specialist_jobs.rs`,
   distinct durable readiness purpose are implemented. Set `GENESIS_PUBLIC_URL`
   along with the complete CREAO configuration to register it. Actual skill
   installation and a live-account receipt remain unverified; see
-  [CREAO_READINESS.md](CREAO_READINESS.md).
+  CREAO_READINESS.md.
 - **Historical Developer creation reconciliation:** API Trigger cannot create
   agents, and attaching an ID alone does not supply the completed bootstrap
   contract now required for Trigger jobs. The following operator API preserves

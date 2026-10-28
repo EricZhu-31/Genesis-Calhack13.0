@@ -25,7 +25,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// Organization ID of every evaluation org (and of its Elastic planner agent).
+/// Organization ID of every evaluation org.
 pub const EVAL_ORG_ID: &str = "org_eval";
 
 /// One evaluation case.

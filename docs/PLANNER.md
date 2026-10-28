@@ -15,7 +15,7 @@ observation_recorded ──► planner reads mission, roles, responsibilities,
 
 ## Status
 
-- Model choice is **pending**. The code supports Anthropic, OpenAI, Gemini (OpenAI-compatible endpoint) and any OpenAI-compatible server, selected by environment variables. Elastic Agent Builder can be added as another `LlmClient` implementation.
+- Model choice is **pending**. The code supports Anthropic, OpenAI, Gemini (OpenAI-compatible endpoint) and any OpenAI-compatible server, selected by environment variables.
 - Tests use `ReplayClient`, which returns scripted replies and records itself as model `replay`. The kernel, validation and saga in those tests are real.
 - External specialists come from a JSON file (`--specialists`). Until Fetch discovery is wired, the list is empty and the prompt forbids `RecruitSpecialist`.
 
@@ -39,20 +39,6 @@ With no model configured, `run` and `once` exit with a clear message; `prompt` s
 - The model never supplies the expected revision or evidence IDs; the planner fills them from the kernel. Unknown IDs, scopes outside the constitution, budget overruns and missing owners are rejected by the kernel, and those exact errors are what the model sees on its next attempt.
 
 For the demo, show a second disruption that should **not** create a role (for example a capacity change that the existing monitoring role owns). Two different pieces of evidence producing two different organizational responses is the evidence that the planner reasons rather than follows a script.
-
-## Elastic Agent Builder as the planner
-
-Set `GENESIS_LLM_PROVIDER=elastic` (with `ELASTIC_KIBANA_URL` and
-`ELASTIC_MANAGEMENT_API_KEY`) to run the planner's model as the
-organization's own mission-planner agent on Elastic Agent Builder
-(`src/elastic.rs`). The agent's instructions are the planner's system prompt
-plus a direction to consult the evidence first; its only tool is the
-organization's `index_search` evidence tool (see [ELASTIC.md](ELASTIC.md)).
-Each completion is one fresh conversation. The reply is parsed and validated
-exactly like any other model's: the agent proposes, the kernel decides.
-Changed instructions create a new agent (its ID includes their digest)
-instead of mutating an existing one. Provider error text never reaches
-decisions. Test: `tests/elastic_planner.rs` (fake Kibana, real kernel).
 
 ## Recovery and trust
 
