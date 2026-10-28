@@ -112,15 +112,26 @@ pub fn classify(
             .get(K::MissingScope.as_str())
             .copied()
             .unwrap_or(0);
+        let rejected = decisions
+            .get(K::PreviouslyRejected.as_str())
+            .copied()
+            .unwrap_or(0);
         if rows.is_empty() {
             // No recorded decisions: either an empty answer or an adoption
             // from before the decision log. Don't claim which.
             "no eligible candidate was found in the bounded registry search".to_owned()
         } else {
-            format!(
-                "none of {} candidates was eligible ({own} published by this organization, {scope} needing permissions the role doesn't hold)",
+            let mut reason = format!(
+                "none of {} candidates was eligible ({own} published by this organization, {scope} needing permissions the role doesn't hold",
                 rows.len()
-            )
+            );
+            if rejected > 0 {
+                reason.push_str(&format!(
+                    ", {rejected} already rejected by this organization's suite"
+                ));
+            }
+            reason.push(')');
+            reason
         }
     };
     let (outcome, reason) = match (state, code) {

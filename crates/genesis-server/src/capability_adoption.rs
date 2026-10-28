@@ -384,6 +384,21 @@ async fn discover_into(
             outcome = Err(AdoptionAttention::InvalidCandidate);
             continue;
         }
+        if record.excluded().iter().any(|key| {
+            key.capability_id == candidate.capability_id
+                && key.version == candidate.version
+                && key.publisher == candidate.publisher
+        }) {
+            decisions.push(CandidateDecision::new(
+                id,
+                rank,
+                candidate,
+                Decided::PreviouslyRejected,
+                "this organization's own suite already rejected this exact version for the same need",
+                now,
+            ));
+            continue;
+        }
         if candidate.publisher == app.org_id {
             decisions.push(CandidateDecision::new(
                 id,

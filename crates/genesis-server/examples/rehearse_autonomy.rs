@@ -468,6 +468,7 @@ async fn main() -> anyhow::Result<()> {
             capability_id: "capacity-checker".into(),
             suite_id: b_suite().suite_id,
             synthesis_fallback: false,
+            max_candidates: 1,
         }],
     });
     let b = build_org(

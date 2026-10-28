@@ -53,6 +53,9 @@ pub enum CandidateDecisionKind {
     InstallationConflict,
     /// A higher-ranked candidate was selected or discovery stopped first.
     NotEvaluated,
+    /// This exact version was already rejected by this organization's suite
+    /// for the same need in an earlier adoption; it is skipped, not retested.
+    PreviouslyRejected,
 }
 
 impl CandidateDecisionKind {
@@ -69,6 +72,7 @@ impl CandidateDecisionKind {
             Self::InvalidResponse => "invalid_response",
             Self::InstallationConflict => "installation_conflict",
             Self::NotEvaluated => "not_evaluated",
+            Self::PreviouslyRejected => "previously_rejected",
         }
     }
 }

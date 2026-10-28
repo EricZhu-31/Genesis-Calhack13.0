@@ -489,11 +489,13 @@ impl Fixture {
                     capability_id: REQUESTED.into(),
                     suite_id: b_suite().suite_id,
                     synthesis_fallback: o.fallback,
+                    max_candidates: 1,
                 },
                 GapAdoptionRule {
                     capability_id: SIBLING.into(),
                     suite_id: b_suite().suite_id,
                     synthesis_fallback: o.fallback,
+                    max_candidates: 1,
                 },
             ],
         });

@@ -471,6 +471,7 @@ async fn b_inherits_a_capability_that_a_synthesized_with_no_operator_calls() {
             capability_id: "capacity-checker".into(),
             suite_id: b_suite().suite_id,
             synthesis_fallback: true,
+            max_candidates: 1,
         }],
     });
     let b = build_org(&b_config, Some(providers(&provider, KEY_B))).unwrap();

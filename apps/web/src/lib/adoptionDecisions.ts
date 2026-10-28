@@ -29,7 +29,8 @@ export type CandidateDecisionKind =
   | "manifest_unavailable"
   | "invalid_response"
   | "installation_conflict"
-  | "not_evaluated";
+  | "not_evaluated"
+  | "previously_rejected";
 
 /** Mirrors the server's `OutcomeView`. */
 export interface OutcomeView {
@@ -103,6 +104,7 @@ export const DECISION: Record<CandidateDecisionKind, { label: string; tone: Tone
   invalid_response: { label: "invalid registry answer", tone: "warn" },
   installation_conflict: { label: "already installed", tone: "neutral" },
   not_evaluated: { label: "not evaluated", tone: "neutral" },
+  previously_rejected: { label: "already rejected here", tone: "neutral" },
 };
 
 /**

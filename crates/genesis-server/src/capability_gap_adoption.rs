@@ -27,7 +27,8 @@
 use crate::app::AppState;
 use crate::auth::Principal;
 use crate::capability_adoption_store::{
-    AdoptionAttention, AdoptionError, AdoptionPhase, AdoptionRecord, CreateAdoption,
+    AdoptionAttention, AdoptionError, AdoptionPhase, AdoptionRecord, CandidateKey, CreateAdoption,
+    MAX_EXCLUDED_CANDIDATES,
 };
 use crate::capability_authority::authorize_current;
 use crate::error::{ApiError, ApiResult};
@@ -68,6 +69,19 @@ pub struct GapAdoptionRule {
     /// After a definitive empty search, release the gap to the gap driver.
     #[serde(default)]
     pub synthesis_fallback: bool,
+    /// How many distinct candidates this organization's own suite may reject
+    /// before the gap is refused. Each further candidate gets a fresh
+    /// adoption that skips the rejected versions. `1` (the default) keeps the
+    /// original behavior: the first rejection refuses the gap.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub max_candidates: u32,
+}
+
+fn one() -> u32 {
+    1
+}
+fn is_one(value: &u32) -> bool {
+    *value == 1
 }
 
 impl GapAdoptionPolicy {
@@ -89,6 +103,12 @@ impl GapAdoptionPolicy {
                     && !rule.suite_id.chars().any(char::is_control),
                 "rule {} needs a suite_id",
                 rule.capability_id
+            );
+            anyhow::ensure!(
+                (1..=MAX_EXCLUDED_CANDIDATES as u32 + 1).contains(&rule.max_candidates),
+                "rule {} needs max_candidates between 1 and {}",
+                rule.capability_id,
+                MAX_EXCLUDED_CANDIDATES + 1
             );
         }
         Ok(())
@@ -176,6 +196,13 @@ pub struct GapAdoptionRecord {
     /// Adoptions of earlier attempts, oldest first (kept for history).
     #[serde(default)]
     pub previous_adoption_ids: Vec<String>,
+    /// Frozen from the rule: candidates this suite may reject before refusal.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub max_candidates: u32,
+    /// Exact versions this suite rejected in earlier attempts, oldest first.
+    /// Later adoptions skip them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rejected: Vec<CandidateKey>,
 }
 
 /// Operator retries allowed per gap after the first adoption.
@@ -204,6 +231,12 @@ impl GapAdoptionRecord {
             0 => format!("gap-adopt:{}", self.gap_id),
             n => format!("gap-adopt:{}:{n}", self.gap_id),
         }
+    }
+
+    /// Operator retries used so far; automatic next-candidate attempts after
+    /// a rejection also take a fresh key but don't count against them.
+    fn operator_retries(&self) -> u32 {
+        self.attempt.saturating_sub(self.rejected.len() as u32)
     }
 
     fn intent(&self) -> CreateAdoption {
@@ -518,6 +551,9 @@ pub enum Step {
     Idle,
     Frozen,
     Dispatched,
+    /// The suite rejected the selection and the frozen budget allows another
+    /// candidate: the next pass dispatches a fresh adoption that skips it.
+    NextCandidate,
     Waiting,
     Installed,
     Released,
@@ -717,7 +753,13 @@ fn step_locked(app: &AppState, state: &OrgState, gap_id: &CapabilityGapId) -> St
                 refuse(app, state, gap, Some(&r), GapAdoptionCode::Authority)
             }
         }
-        AdoptionPhase::Rejected => refuse(app, state, gap, Some(&r), GapAdoptionCode::Rejected),
+        AdoptionPhase::Rejected => {
+            if let Some(next) = next_candidate(state, gap, &r, &adoption) {
+                save(app, Some(&r), &next)?;
+                return Ok(Step::NextCandidate);
+            }
+            refuse(app, state, gap, Some(&r), GapAdoptionCode::Rejected)
+        }
         AdoptionPhase::Fenced => refuse(app, state, gap, Some(&r), GapAdoptionCode::Authority),
         AdoptionPhase::Attention => match adoption.attention_code() {
             // An empty search answered the frozen grant only. A changed grant
@@ -750,6 +792,35 @@ fn step_locked(app: &AppState, state: &OrgState, gap_id: &CapabilityGapId) -> St
             Some(A::Internal) | None => attention(app, &r, GapAdoptionCode::InvalidRecord),
         },
     }
+}
+
+/// After this organization's suite rejected the selected candidate, the next
+/// attempt (if the frozen budget allows one): the rejected version joins the
+/// exclusion list and a fresh adoption is dispatched under a new key. The
+/// rejected adoption stays in history. Nothing else about the frozen intent
+/// changes, and authority is rechecked by dispatch as usual.
+fn next_candidate(
+    state: &OrgState,
+    gap: &CapabilityGap,
+    r: &GapAdoptionRecord,
+    adoption: &AdoptionRecord,
+) -> Option<GapAdoptionRecord> {
+    let rejected = CandidateKey::of(adoption.selection()?);
+    if gap.status != CapabilityGapStatus::Open
+        || !authorized(state, r)
+        || r.rejected.len() + 1 >= r.max_candidates as usize
+        || r.rejected.len() >= MAX_EXCLUDED_CANDIDATES
+        || r.rejected.contains(&rejected)
+    {
+        return None;
+    }
+    let mut next = r.clone();
+    next.rejected.push(rejected);
+    next.previous_adoption_ids.extend(next.adoption_id.take());
+    next.attempt += 1;
+    next.code = None;
+    next.updated_at = Utc::now();
+    Some(next)
 }
 
 fn freeze(app: &AppState, state: &OrgState, gap: &CapabilityGap) -> StoreResult<Step> {
@@ -814,6 +885,8 @@ fn freeze(app: &AppState, state: &OrgState, gap: &CapabilityGap) -> StoreResult<
         updated_at: now,
         attempt: 0,
         previous_adoption_ids: vec![],
+        max_candidates: rule.max_candidates,
+        rejected: vec![],
     };
     if !authorized(state, &record) {
         return Ok(Step::Idle);
@@ -839,28 +912,32 @@ fn dispatch(
     }
     let suite = app.evidence_policy.suite(&r.suite_id).expect("checked");
     // Idempotent by key: a crash after creation recovers the same adoption.
-    let adoption = match app.store.create_adoption(&r.intent(), suite, Utc::now()) {
-        Ok((a, _)) => a,
-        Err(AdoptionError::Db(e)) => return Err(StoreError::Db(e)),
-        Err(AdoptionError::Authority(_)) => {
-            return refuse(app, state, gap, Some(r), GapAdoptionCode::Authority)
-        }
-        // Another adoption holds this requirement and grant, or the store is
-        // at capacity: both clear when that work ends, so wait (visibly).
-        Err(AdoptionError::ActiveConflict | AdoptionError::Limit) => {
-            if r.code != Some(GapAdoptionCode::Conflict) {
-                let mut next = r.clone();
-                next.code = Some(GapAdoptionCode::Conflict);
-                next.updated_at = Utc::now();
-                save(app, Some(r), &next)?;
+    let adoption =
+        match app
+            .store
+            .create_adoption_excluding(&r.intent(), &r.rejected, suite, Utc::now())
+        {
+            Ok((a, _)) => a,
+            Err(AdoptionError::Db(e)) => return Err(StoreError::Db(e)),
+            Err(AdoptionError::Authority(_)) => {
+                return refuse(app, state, gap, Some(r), GapAdoptionCode::Authority)
             }
-            return Ok(Step::Waiting);
-        }
-        Err(AdoptionError::InvalidInput) => {
-            return attention(app, r, GapAdoptionCode::Configuration)
-        }
-        Err(_) => return attention(app, r, GapAdoptionCode::InvalidRecord),
-    };
+            // Another adoption holds this requirement and grant, or the store is
+            // at capacity: both clear when that work ends, so wait (visibly).
+            Err(AdoptionError::ActiveConflict | AdoptionError::Limit) => {
+                if r.code != Some(GapAdoptionCode::Conflict) {
+                    let mut next = r.clone();
+                    next.code = Some(GapAdoptionCode::Conflict);
+                    next.updated_at = Utc::now();
+                    save(app, Some(r), &next)?;
+                }
+                return Ok(Step::Waiting);
+            }
+            Err(AdoptionError::InvalidInput) => {
+                return attention(app, r, GapAdoptionCode::Configuration)
+            }
+            Err(_) => return attention(app, r, GapAdoptionCode::InvalidRecord),
+        };
     let mut next = r.clone();
     next.adoption_id = Some(adoption.id().to_owned());
     next.code = None;
@@ -1015,7 +1092,7 @@ fn can_retry(r: &GapAdoptionRecord) -> bool {
     r.state == GapAdoptionState::Attention
         && r.code.is_some_and(GapAdoptionCode::retryable)
         && r.adoption_id.is_some()
-        && r.attempt < MAX_RETRIES
+        && r.operator_retries() < MAX_RETRIES
 }
 
 /// Every native check run of the stopped adoption has terminal provider

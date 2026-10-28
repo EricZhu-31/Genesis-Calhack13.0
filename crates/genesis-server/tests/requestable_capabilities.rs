@@ -92,6 +92,7 @@ fn adopt(capability: &str) -> GapAdoptionRule {
         capability_id: CapabilityId::new(capability),
         suite_id: "PRIVATE_ADOPTION_SUITE".into(),
         synthesis_fallback: false,
+        max_candidates: 1,
     }
 }
 

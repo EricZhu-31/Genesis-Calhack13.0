@@ -25,6 +25,34 @@ const MAX_RECORD_BYTES: usize = 256 * 1024;
 const MAX_MANIFEST_BYTES: usize = 128 * 1024;
 const MAX_QUERY_BYTES: usize = 4096;
 
+/// The most candidates one adoption may exclude: the registry answers at
+/// most five per search, so excluding more could never reach a new one.
+pub const MAX_EXCLUDED_CANDIDATES: usize = 5;
+
+/// One exact published version, as a receiver remembers it across adoptions.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateKey {
+    pub capability_id: CapabilityId,
+    pub version: String,
+    pub publisher: OrgId,
+}
+
+impl CandidateKey {
+    pub fn of(manifest: &CapabilityManifest) -> Self {
+        Self {
+            capability_id: manifest.capability_id.clone(),
+            version: manifest.version.clone(),
+            publisher: manifest.publisher.clone(),
+        }
+    }
+    fn valid(&self) -> bool {
+        domain_id(self.capability_id.as_str())
+            && domain_id(&self.version)
+            && domain_id(self.publisher.as_str())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateAdoption {
@@ -157,6 +185,11 @@ pub struct AdoptionRecord {
     rejection_ref: Option<String>,
     attention: Option<AdoptionAttention>,
     fence_reason: Option<AdoptionFence>,
+    /// Exact versions this organization's own suite already rejected for the
+    /// same need; discovery skips them. Fixed at creation. Absent (and not
+    /// hashed) when empty, so records written before it keep their digests.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    excluded: Vec<CandidateKey>,
     record_sha256: String,
 }
 
@@ -223,6 +256,9 @@ impl AdoptionRecord {
     }
     pub fn selection(&self) -> Option<&CapabilityManifest> {
         self.selection.as_ref()
+    }
+    pub fn excluded(&self) -> &[CandidateKey] {
+        &self.excluded
     }
     pub fn installation_id(&self) -> Option<&InstallationId> {
         self.installation_id.as_ref()
@@ -465,7 +501,7 @@ impl AdoptionRecord {
         next.finish()
     }
     fn immutable_digest(&self) -> Result<String> {
-        hash(&(
+        let base = (
             &self.id,
             &self.client_request_id,
             &self.intent_sha256,
@@ -475,7 +511,12 @@ impl AdoptionRecord {
             self.case_count,
             &self.query,
             self.created_at,
-        ))
+        );
+        if self.excluded.is_empty() {
+            hash(&base)
+        } else {
+            hash(&("genesis-adoption-excluded-v1", base, &self.excluded))
+        }
     }
     fn digest(&self) -> Result<String> {
         hash(&(
@@ -552,6 +593,13 @@ impl AdoptionRecord {
                 .installation_id
                 .as_ref()
                 .is_some_and(|id| !domain_id(id.as_str()))
+            || self.excluded.len() > MAX_EXCLUDED_CANDIDATES
+            || self.excluded.iter().any(|key| !key.valid())
+            || self.excluded.iter().collect::<BTreeSet<_>>().len() != self.excluded.len()
+            || self
+                .selection
+                .as_ref()
+                .is_some_and(|m| self.excluded.contains(&CandidateKey::of(m)))
             || self.job_ids.len() > self.case_count
             || self.job_ids.iter().any(|id| !domain_id(id.as_str()))
             || self.job_ids.iter().collect::<BTreeSet<_>>().len() != self.job_ids.len()
@@ -791,6 +839,25 @@ impl Store {
         suite: &OracleSuite,
         now: DateTime<Utc>,
     ) -> Result<(AdoptionRecord, bool)> {
+        self.create_adoption_excluding(intent, &[], suite, now)
+    }
+    /// Like [`create_adoption`](Self::create_adoption), with exact versions
+    /// discovery must skip because this organization already rejected them.
+    /// The exclusion is part of the record's immutable identity: the same key
+    /// with a different exclusion is an idempotency conflict.
+    pub fn create_adoption_excluding(
+        &self,
+        intent: &CreateAdoption,
+        excluded: &[CandidateKey],
+        suite: &OracleSuite,
+        now: DateTime<Utc>,
+    ) -> Result<(AdoptionRecord, bool)> {
+        let mut excluded = excluded.to_vec();
+        excluded.sort();
+        excluded.dedup();
+        if excluded.len() > MAX_EXCLUDED_CANDIDATES || excluded.iter().any(|key| !key.valid()) {
+            return Err(AdoptionError::InvalidInput);
+        }
         if !intent.provider_access_acknowledged
             || [
                 &intent.client_request_id,
@@ -810,7 +877,7 @@ impl Store {
         let digest = hash(intent)?;
         let mut conn = self.lock();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if let Some(id)=tx.query_row("SELECT CASE WHEN length(CAST(id AS BLOB))<=256 THEN id END FROM capability_adoptions WHERE client_request_id=?1",params![intent.client_request_id],|row|row.get::<_,Option<String>>(0)).optional()? {let id=id.ok_or(AdoptionError::InvalidRecord)?;let previous=load(&tx,&id)?;if previous.intent_sha256!=digest{return Err(AdoptionError::IdempotencyConflict);}return Ok((previous,false));}
+        if let Some(id)=tx.query_row("SELECT CASE WHEN length(CAST(id AS BLOB))<=256 THEN id END FROM capability_adoptions WHERE client_request_id=?1",params![intent.client_request_id],|row|row.get::<_,Option<String>>(0)).optional()? {let id=id.ok_or(AdoptionError::InvalidRecord)?;let previous=load(&tx,&id)?;if previous.intent_sha256!=digest||previous.excluded!=excluded{return Err(AdoptionError::IdempotencyConflict);}return Ok((previous,false));}
         let state = state(&tx)?;
         let authority = authority_snapshot(
             &state,
@@ -886,6 +953,7 @@ impl Store {
             rejection_ref: None,
             attention: None,
             fence_reason: None,
+            excluded,
             record_sha256: String::new(),
         };
         record.seal()?;
