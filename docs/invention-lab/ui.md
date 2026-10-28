@@ -2,7 +2,7 @@
 
 **Status: proposed design plus an isolated, unwired read-only model.** Owner:
 Eric (`EricZhu-31`) / Eric's Claude, as assigned in the
-[handoff](../AGENT_HANDOFF.md#current-ownership-and-next-work). Scope is this
+handoff. Scope is this
 file and `apps/web/src/invention-lab/**`. Nothing here changes the kernel, forge,
 executor, scoring, adoption, ACP bridge, `apps/stage` or the console's existing
 routes. Wiring the view into `App.tsx` or adding a server route is shared work

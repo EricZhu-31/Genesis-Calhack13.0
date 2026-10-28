@@ -2,10 +2,10 @@
 
 **Networked recursive capability improvement with fixed model weights** is the
 canonical product and research framing. Status: open implementation and evaluation
-roadmap, not completed behavior or a demonstrated positive result. The user has resumed ongoing work under the [repository goal](ONGOING_GOAL.md)
+roadmap, not completed behavior or a demonstrated positive result. The user has resumed ongoing work under the repository goal
 and its active hourly continuation. The older app Goal card remains paused until
 it can be replaced through the user-controlled lifecycle; it does not define the
-new product scope. Current [ownership](AGENT_HANDOFF.md#current-ownership-and-next-work)
+new product scope. Current ownership
 supersedes the earlier side-chat proposal. See [implementation status](IMPLEMENTATION_STATUS.md)
 for the evidence boundary and [invention labs](INVENTION_LAB_DEMO.md) for the proposed
 demonstration. Event organization is no longer a product or completion requirement.
@@ -16,7 +16,7 @@ demonstration. Event organization is no longer a product or completion requireme
 
 The moonshot is a network whose useful experience compounds across organizations, including experience about how to produce further improvements. Universal infrastructure means admitting different domains and their evaluators; it does not mean every tool helps every task.
 
-The authoritative current completion contract is [G0–G4 and delivery in the ongoing goal](ONGOING_GOAL.md#completion-gates-and-evidence). The following summarizes its research evidence; it does not add a separate venue or deployed-repair prerequisite:
+The authoritative current completion contract is G0–G4 and delivery in the ongoing goal. The following summarizes its research evidence; it does not add a separate venue or deployed-repair prerequisite:
 
 - [ ] A mission requirement triggers a justified responsibility or role change, with accountable ownership and a recorded handoff or retirement. A separate case retains an existing owner when sufficient; agent count is not the success criterion.
 - [ ] A develops an executable method, B independently accepts and improves it, and A independently accepts and executes the frozen revision to develop a later capability on a fresh task in at least one recorded chain. Non-reuse remains valid for controls but cannot substitute for this transfer evidence.
@@ -86,7 +86,7 @@ validation must be completed before publishing it as implemented. The old venue
 mission is not a prerequisite for the new product demonstration. Authenticated
 sponsor evidence remains a separate obligation for any sponsor claims.
 
-The [handoff](AGENT_HANDOFF.md#current-ownership-and-next-work) and [issue #4](https://github.com/HenryWashuHe/genesis/issues/4)
+The handoff and [issue #4](https://github.com/HenryWashuHe/genesis/issues/4)
 record the current task split. Henry's core Claude retains adoption and the narrow
 terminal-run retry work; Eric retains the constitution audit and the next evidence
 UI design; the ACP author retains its regression corrections. Codex owns shared

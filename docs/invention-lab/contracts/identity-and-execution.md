@@ -5,7 +5,7 @@ This implements an **experimental, proposed partial G0 interface**, in the pure
 It does not implement a simulator, method executor, registry manifest, acceptance
 policy, comparison runner, or evidence authentication. Affected-owner agreement
 is still pending. The
-[ongoing goal](../../ONGOING_GOAL.md) remains open. No runtime or model is selected.
+ongoing goal remains open. No runtime or model is selected.
 
 ## Freeze before execution
 

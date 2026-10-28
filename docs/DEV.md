@@ -29,14 +29,12 @@ State lives in `data/dev/*.db` (git-ignored). Delete that folder for a clean run
 | Mission planner (configured model, or an Elastic Agent Builder agent) | [PLANNER.md](PLANNER.md) | Merged (#12, #22); replay- and fake-tested; requires model configuration |
 | CREAO asynchronous roles and jobs | [CREAO_RUNTIME.md](CREAO_RUNTIME.md), [ASYNC_PROVISIONING.md](ASYNC_PROVISIONING.md) | Kernel hook and env registration merged (#20). Gateway readiness (#26), operator attach (#27) and the CREAO readiness probe (#29) are open. Scripted-provider tests only; no live run |
 | Apify capability acquisition, execution, acceptance and adoption | [CAPABILITY_EXECUTION.md](CAPABILITY_EXECUTION.md) | Merged; loopback-fixture tested |
-| Fetch recruitment | [FETCH_RUNTIME.md](FETCH_RUNTIME.md) | Local multi-process proof |
-| Console: capability evidence, Attention panel and failure drills | [CAPABILITY_EXECUTION.md](CAPABILITY_EXECUTION.md), [PR_REVIEW_QUEUE.md](PR_REVIEW_QUEUE.md) | Capability evidence merged (#21, integration #55); Attention panel and failure drills (#28) remain open |
+| Console: capability evidence, Attention panel and failure drills | [CAPABILITY_EXECUTION.md](CAPABILITY_EXECUTION.md) | Capability evidence merged (#21, integration #55); Attention panel and failure drills (#28) remain open |
 
 The evidence listed here is local or loopback; live sponsor execution remains
 a separate gate. `genesis dev` enables labeled fallback stubs, but configured
 Elastic and CREAO integrations can still attach from the environment. For a
-fully stubbed demo, leave those provider configurations unset. Review status of open PRs:
-[PR_REVIEW_QUEUE.md](PR_REVIEW_QUEUE.md).
+fully stubbed demo, leave those provider configurations unset.
 
 **Dev stubs are not integrations.** With stubs on, any role whose provider has no adapter gets a binding with `provider: "dev_stub"` and an ID like `devstub-elastic-…`. The console labels these `DEV STUB · for elastic`, and the `role_provisioned` event carries `dev_stub: true`. Run an organization without `--dev-stub` and unconfigured providers fail provisioning instead.
 

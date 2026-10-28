@@ -7,7 +7,7 @@ Status: baseline architecture drafted October 21, 2026; direction revised Octobe
 routes and venue workload below are design history, not a current inventory or
 product completion gate. Use [implementation status](IMPLEMENTATION_STATUS.md)
 for implemented vs unmerged vs proposed behavior, the [invention-lab proposal](INVENTION_LAB_DEMO.md)
-for the new demonstration, and the [handoff](AGENT_HANDOFF.md) for ownership.
+for the new demonstration, and the handoff for ownership.
 
 The network should retain executable capabilities and methods for developing
 further capabilities across independent organizations. Organizational evolution
@@ -15,7 +15,7 @@ changes accountable roles and specialists; capability evolution changes what
 they can execute and how they develop it. Model weights stay fixed. Measured
 recursive benefit remains unproven. Provider contracts and authenticated-live
 evidence are tracked separately in [PROVIDER_CONTRACTS.md](PROVIDER_CONTRACTS.md)
-and [LIVE_GATES.md](LIVE_GATES.md).
+and LIVE_GATES.md.
 
 ## 1. Stack and boundaries
 
@@ -241,17 +241,17 @@ Test critical domain transitions and effects, not merely enum serialization. Inc
 
 ## 13. Integration gates and scope
 
-The following records the original integration plan and hackathon scope. For current validation status and active work, use [live gates](LIVE_GATES.md) and the [handoff](AGENT_HANDOFF.md).
+The following records the original integration plan and hackathon scope. For current validation status and active work, use live gates and the handoff.
 
 The original plan called for proving authenticated Elastic create/invoke/retrieve; Fetch discovery and offer/accept/result messaging; Apify create/build/run/results; and CREAO create/run/custom-skill HTTP execution before feature work, measuring actual cold latencies and verifying account limits. Those checks were untested when this baseline was drafted; this paragraph is not a current test report.
 
 The original, now-superseded demo scope was one complete mutation, recruitment, Actor creation and verification, persistent CREAO role with a second run, B's adoption, and retirement/handoff. One repair was optional in that original plan. Defer real payments, real reservations, public marketplaces, unrestricted spawning, automated credential discovery, and production multi-tenancy.
 
-A three-minute all-cold path is a target, not a guarantee. If measured provider latency exceeds it, use an honestly labeled full-run recording alongside live progress and reuse. Never display prebuilt resources as freshly synthesized. Team ownership and the hour-by-hour integration sequence are in [TEAM_WORKSTREAMS.md](TEAM_WORKSTREAMS.md).
+A three-minute all-cold path is a target, not a guarantee. If measured provider latency exceeds it, use an honestly labeled full-run recording alongside live progress and reuse. Never display prebuilt resources as freshly synthesized. Team ownership and the hour-by-hour integration sequence are in TEAM_WORKSTREAMS.md.
 
 ## 14. Selective transfer and recursive capability improvement
 
-This section is the governing design direction, not newly implemented behavior. The detailed [goal, milestones, and evaluation protocol](RECURSIVE_CAPABILITY_IMPROVEMENT.md) and [proposed invention-lab demonstration](INVENTION_LAB_DEMO.md) supersede the venue product narrative. Runtime contracts remain unchanged by this documentation update; the [handoff](AGENT_HANDOFF.md) assigns bounded work.
+This section is the governing design direction, not newly implemented behavior. The detailed [goal, milestones, and evaluation protocol](RECURSIVE_CAPABILITY_IMPROVEMENT.md) and [proposed invention-lab demonstration](INVENTION_LAB_DEMO.md) supersede the venue product narrative. Runtime contracts remain unchanged by this documentation update; the handoff assigns bounded work.
 
 The architecture is general when it can admit different capability types, select them for their applicable tasks, and apply the appropriate verification method. It does not require every artifact to transfer across domains or improve the immediately following task. Fixed model weights permit system-level adaptation through retained executable capabilities; execution tasks are not weight-training steps.
 

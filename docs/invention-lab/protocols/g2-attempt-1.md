@@ -3,7 +3,7 @@
 Status: **proposed, not frozen, nothing run.** Henry's Claude, evaluator and
 adoption lane. Written after rehearsals 5 and 6 (#230, #248), which exercised
 this path with a stand-in and, in rehearsal 6, a live planner. This is
-exploratory evidence for the G2 row of [the goal](../../ONGOING_GOAL.md), not
+exploratory evidence for the G2 row of the goal, not
 the controlled G4 comparison. A decline or a planner refusal is a result.
 Revised after an independent agent review (#249) found that the first draft
 let one offer's planner call shape the other's, and could crash after model

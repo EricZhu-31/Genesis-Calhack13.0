@@ -92,7 +92,7 @@ generation record:
 
 - **Return-path evidence:** A's pinned trial Accepts, A's owner adopts, and
   the invocation completes under A's grant. Assess G3 against the separate
-  [mechanism contract](../../ONGOING_GOAL.md#completion-gates-and-evidence);
+  mechanism contract;
   it does not require a positive improvement result. One exploratory chain
   does not by itself close that gate.
 - **Exploratory quality floor met:** the return path above is recorded,

@@ -112,7 +112,7 @@ on purpose (setting a role back to `Active`, an installation back to
     | `GENESIS_SAGA_FUZZ_STEPS=600`, `GENESIS_SAGA_FUZZ_LIFETIMES=40` | 747 (incl. 128 `RequestCapability`) | 2,001 | 120 (93) | about 1 min |
 
     Both runs found no violations. Crash timing depends on the scheduler, so the resumed count varies from run to run.
-- After the demo: see [DEMO_RUNBOOK.md](DEMO_RUNBOOK.md).
+- After the demo: see DEMO_RUNBOOK.md.
 
 ## What it does not prove
 

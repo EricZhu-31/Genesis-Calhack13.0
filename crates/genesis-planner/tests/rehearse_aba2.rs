@@ -220,7 +220,7 @@ async fn plan_once(org: &OrgProc, api: &Http, reply: String, evidence: &Path) ->
     let model = Arc::new(ReplayClient::new([reply]));
     let mut runner = Runner::new(
         Planner::new(
-            KernelClient::new(&org.url(), &format!("{}-agent", org.id)),
+            KernelClient::new(org.url(), format!("{}-agent", org.id)),
             model,
         ),
         Duration::from_millis(1),

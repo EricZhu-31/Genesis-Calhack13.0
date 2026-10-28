@@ -2,7 +2,7 @@
 
 ## Current review snapshot — October 25, 2026
 
-The [latest review batch](reviews/pr-queue-2026-10-25.md#current-manual-review-batch--october-25-2026)
+The latest review batch
 merged the research-runner correction (#228), Stage session/event/report binding
 (#246/#254), and prospective assignment/pre-trial-pin/process-eligibility fixes
 (#248/#253 and #250/#255). The author's #248 run records adoption after 4/6
@@ -40,10 +40,10 @@ separate from return-path mechanism evidence; no freeze or new run is claimed.
 **Status: genuine generated source and receiving-side records exist; the A → B → A loop remains incomplete.**
 GENESIS is infrastructure for **networked recursive capability improvement with
 fixed model weights**. The [implementation inventory](IMPLEMENTATION_STATUS.md)
-and [ongoing goal](ONGOING_GOAL.md#completion-gates-and-evidence) distinguish
+and ongoing goal distinguish
 implemented mechanisms from the proposed demonstration below. G0–G4 remain open.
 
-At [closeout main `7ec75563`](reviews/pr-queue-2026-10-25.md#current-closeout--main-7ec75563),
+At closeout main `7ec75563`,
 #211 implements scored-output/responsibility binding and #215 adds historical
 scripted rehearsal records. Two bundles each lack 89 manifest artifacts; the
 third's 85/85 matches exclude unmanifested exploration artifacts/databases.
@@ -208,7 +208,7 @@ that a machine is safe or effective in the physical world.
 
 These are intended integration responsibilities, not verified new platform
 features or completed live runs. Validate the selected APIs and actual execution
-before implementing the new workload; retain the [live gates](LIVE_GATES.md).
+before implementing the new workload; retain the live gates.
 
 | Platform | Proposed core responsibility | Boundary and missing proof |
 | --- | --- | --- |
@@ -234,5 +234,5 @@ before implementing the new workload; retain the [live gates](LIVE_GATES.md).
 No gate is currently marked complete for this proposed demo. Existing acquisition
 and inheritance fixtures remain valuable infrastructure evidence. Cross-organization
 repair is a parallel foundation milestone, not a reason to revive event management
-as the product. See the [ownership map](AGENT_HANDOFF.md#current-ownership-and-next-work)
+as the product. See the ownership map
 before implementing any extension.

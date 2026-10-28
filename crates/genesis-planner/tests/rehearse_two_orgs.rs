@@ -352,7 +352,7 @@ async fn rehearse_two_organizations_in_separate_processes() {
     .to_string();
     let model = Arc::new(ReplayClient::new([reply]));
     let mut runner = Runner::new(
-        Planner::new(KernelClient::new(&b.url(), "org_example_b-agent"), model),
+        Planner::new(KernelClient::new(b.url(), "org_example_b-agent"), model),
         Duration::from_millis(1),
     );
     let outcomes = runner.tick().await.unwrap();

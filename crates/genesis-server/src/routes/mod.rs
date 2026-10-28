@@ -12,9 +12,6 @@ pub(crate) mod jobs;
 mod method_adoptions;
 mod org;
 mod search;
-mod venue_assessments;
-mod venue_monitors;
-mod venue_recoveries;
 
 use crate::app::AppState;
 use axum::extract::DefaultBodyLimit;
@@ -49,23 +46,6 @@ pub fn router(state: AppState) -> Router {
             get(changes::by_request),
         )
         .route("/jobs", post(jobs::dispatch).get(jobs::list))
-        .route("/venue-assessments", post(venue_assessments::create))
-        .route("/venue-assessments/{id}", get(venue_assessments::get))
-        .route("/venue-monitors", post(venue_monitors::create))
-        .route("/venue-monitors/{id}", get(venue_monitors::get))
-        .route("/venue-monitors/{id}/stop", post(venue_monitors::stop))
-        .route("/venue-recoveries", post(venue_recoveries::create))
-        .route("/venue-recovery-intakes", get(venue_recoveries::intakes))
-        .route("/venue-recoveries/{id}", get(venue_recoveries::get))
-        .route("/venue-recoveries/{id}/step", post(venue_recoveries::step))
-        .route(
-            "/venue-recoveries/{id}/retry",
-            post(venue_recoveries::retry),
-        )
-        .route(
-            "/venue-assessments/{id}/verify",
-            post(venue_assessments::verify),
-        )
         .route("/jobs/{id}", get(jobs::get_one))
         .route(
             "/org-changes/{id}/operations/{role_key}/abandon",

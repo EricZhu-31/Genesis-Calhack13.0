@@ -209,6 +209,11 @@ pub struct OpenAiCompatClient {
     model: String,
     base_url: String,
     provider_label: String,
+    /// Request field carrying the output-token cap. OpenAI's own API takes
+    /// `max_completion_tokens` (current reasoning models reject
+    /// `max_tokens`); other OpenAI-compatible servers still expect
+    /// `max_tokens`.
+    token_limit_field: &'static str,
     http: reqwest::Client,
 }
 
@@ -219,11 +224,18 @@ impl OpenAiCompatClient {
         base_url: impl Into<String>,
         provider_label: impl Into<String>,
     ) -> Self {
+        let provider_label = provider_label.into();
+        let token_limit_field = if provider_label == "openai" {
+            "max_completion_tokens"
+        } else {
+            "max_tokens"
+        };
         Self {
             api_key: api_key.into(),
             model: model.into(),
             base_url: base_url.into(),
-            provider_label: provider_label.into(),
+            provider_label,
+            token_limit_field,
             http: http(),
         }
     }
@@ -242,12 +254,12 @@ impl LlmClient for OpenAiCompatClient {
                 .iter()
                 .map(|m| serde_json::json!({"role": m.role, "content": m.content})),
         );
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.model,
-            "max_tokens": req.max_tokens,
             "messages": messages,
             "response_format": {"type": "json_object"},
         });
+        body[self.token_limit_field] = req.max_tokens.into();
         let resp = self
             .http
             .post(format!(
